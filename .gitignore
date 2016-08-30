@@ -1,0 +1,13 @@
+*.py[cod]
+*.js.map
+__pycache__/
+
+# Directories
+.idea
+
+# Translations
+*.mo
+
+# Files
+local_settings.py
+secret_settings.py
