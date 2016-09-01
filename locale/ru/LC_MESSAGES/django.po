@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2016-08-29 15:02+0300\n"
+"POT-Creation-Date: 2016-09-01 09:12+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -25,37 +25,41 @@ msgstr ""
 msgid "%s is already full-time member of another organization"
 msgstr "%s в штате другой организации"
 
-#: rcalendar/models.py:222
+#: rcalendar/models.py:225
 msgid "Interval kind"
 msgstr "Тип интервала"
 
-#: rcalendar/models.py:305
+#: rcalendar/models.py:314
 msgid "End date must be greater than start date."
 msgstr "Время окончания должно быть позднее времени начала."
 
-#: rcalendar/models.py:309
+#: rcalendar/models.py:318
 msgid "You must specify organization for this interval."
 msgstr "Нужно указать организацию для данного интервала."
 
-#: rcalendar/models.py:313
+#: rcalendar/models.py:322
 msgid "Manager is't in specified organization."
 msgstr "Этот менеджер не является участником данной организации."
 
-#: rcalendar/models.py:317
+#: rcalendar/models.py:326
 msgid "You must specify manager for this interval."
 msgstr "Нужно указать менеджера для данного интервала."
 
-#: rcalendar/models.py:324
+#: rcalendar/models.py:333
 msgid "This period is't fall within organization time."
 msgstr "Выбранный период не входит целиком в выделенное время для организации."
 
-#: rcalendar/models.py:330
+#: rcalendar/models.py:339
 msgid "This period is reserved for another manager."
 msgstr "Выбранный период входит во время, выделенное для другого менеджера."
 
-#: rcalendar/models.py:337
+#: rcalendar/models.py:346
 msgid "This period falls within another organization."
 msgstr "Выбранный период входит во время, выделенное для другой организации."
+
+#: rcalendar/models.py:353
+msgid "This period falls within scheduled unavailable time."
+msgstr "Выбранный период входит в нерабочее время по расписанию."
 
 #: rcalendar/views.py:179
 #, python-format
@@ -92,3 +96,11 @@ msgstr "со следующей недели"
 #: rcalendar/views.py:195
 msgid "Neither current_week or next_weeks parameter is specified."
 msgstr "Не отмечен ни один из параметров: current_week, next_weeks."
+
+#: rcalendar/views.py:214
+msgid "Specified interval has been marked as available for working."
+msgstr "Указанный интервал отмечен доступным для работы."
+
+#: rcalendar/views.py:215
+msgid "Specified interval already marked as available for working."
+msgstr "Указанный интервал уже является доступным для работы."

@@ -209,8 +209,10 @@ class ResourceViewSet(CreateWithIdMixIn,
     def clear_unavailable_interval(self, request, pk):
         start, end = parse_args(parse_datetime, request.data, 'start', 'end')
         resource = self.get_object()
-        resource.clear_unvailable_interval(start, end)
-        return Response()
+        result = resource.clear_unvailable_interval(start, end)
+        if result:
+            return Response({'detail': _('Specified interval has been marked as available for working.')})
+        return Response({'detail': _('Specified interval already marked as available for working.')})
 
 
 class IntervalViewSet(mixins.CreateModelMixin,

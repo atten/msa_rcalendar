@@ -75,7 +75,10 @@ class Resource(models.Model):
 
     def clear_unvailable_interval(self, start, end):
         i = Interval(resource=self, start=start, end=end, kind=Interval.Kind_Unavailable)
-        i.clear_existing()
+        changed1 = i.clear_existing()
+        i.kind = Interval.Kind_ScheduledUnavailable
+        changed2 = i.clear_existing()
+        return changed1 or changed2
 
     def apply_schedule(self, schedule_intervals=None, current_week=True, next_weeks=True):
         """
@@ -265,9 +268,11 @@ class Interval(models.Model):
         qs = existing or Interval.objects.similar(self, self.start, self.end)
         do_save = isinstance(qs, models.QuerySet)
         do_append = isinstance(existing, list)
+        changed = False
 
         for interval in qs:
             if interval.start < self.start and interval.end > self.end:        # снаружи
+                changed = True
                 end_old = interval.end
                 interval.end = self.start
                 if do_save:
@@ -285,20 +290,24 @@ class Interval(models.Model):
                     existing.append(i2)
 
             elif interval.start < self.start < interval.end:                   # пересекаются
+                changed = True
                 interval.end = self.start
                 if do_save:
                     interval.save(join_existing=False)
 
             elif interval.start < self.end < interval.end:                     # пересекаются
+                changed = True
                 interval.start = self.end
                 if do_save:
                     interval.save(join_existing=False)
 
             elif interval.start >= self.start and interval.end <= self.end:    # внутри
+                changed = True
                 if do_save:
                     interval.delete()
                 if do_append:
                     existing.remove(interval)
+        return changed
 
     def save(self, join_existing=True, *args, **kwargs):
         if self.start >= self.end:
@@ -329,12 +338,32 @@ class Interval(models.Model):
                                .exclude(manager=self.manager):
                 raise exceptions.FormError('', _('This period is reserved for another manager.'))
 
-        if self.kind == Interval.Kind_OrganizationReserved:
+        elif self.kind == Interval.Kind_OrganizationReserved:
             if Interval.objects.between(self.start, self.end) \
                                .filter(kind=Interval.Kind_OrganizationReserved,
                                        resource=self.resource) \
                                .exclude(organization=self.organization):
                 raise exceptions.FormError('', _('This period falls within another organization.'))
+
+        elif self.kind == Interval.Kind_Unavailable:
+            for i in Interval.objects.between(self.start, self.end) \
+                                     .filter(kind=Interval.Kind_ScheduledUnavailable,
+                                             resource=self.resource):
+                if i.start <= self.start and i.end >= self.end:
+                    raise exceptions.FormError('', _('This period falls within scheduled unavailable time.'))
+                elif i.start <= self.start:
+                    self.start = i.end
+                elif i.end >= self.end:
+                    self.end = i.start
+                else:
+                    next_part = Interval(start=i.end,
+                                         end=self.end,
+                                         resource=self.resource,
+                                         kind=self.kind,
+                                         manager=self.manager,
+                                         comment=self.comment)
+                    next_part.save(join_existing, *args, **kwargs)
+                    self.end = i.start
 
         if join_existing:
             self.join_existing()
