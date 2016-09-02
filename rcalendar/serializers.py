@@ -19,7 +19,7 @@ class IntervalSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Interval
-        fields = ('id', 'start', 'end', 'kind', 'resource', 'organization', 'manager', 'comment')
+        fields = ('id', 'start', 'end', 'kind', 'resource', 'organization', 'manager', 'comment', 'is_extendable')
 
     def to_representation(self, instance):
         """добавляет к представлению kind в виде строки и объект, если есть"""

@@ -123,23 +123,5 @@ REST_FRAMEWORK = {
     'DEFAULT_FILTER_BACKENDS': ('url_filter.integrations.drf.DjangoFilterBackend',)
 }
 
-# celery
-BROKER_URL = 'redis://localhost:6363/2'
-CELERY_RESULT_BACKEND = 'redis://localhost:6363/3'
-
-from celery.schedules import crontab
-
-CELERYBEAT_SCHEDULE = {
-    'update-intervals': {
-        'task': 'rcalendar.tasks.update_intervals',
-        'schedule': crontab(minute=0, hour=0),
-    },
-    'apply-schedules': {
-        'task': 'rcalendar.tasks.apply_schedules',
-        'schedule': crontab(minute=0, hour=0, day_of_week=6),
-    },
-}
-
-
 # REDEFINE
 from .local_settings import *

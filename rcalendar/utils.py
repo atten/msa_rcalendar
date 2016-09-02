@@ -10,28 +10,19 @@ def datetime_from_date(d):
     return datetime.combine(d, time(tzinfo=get_default_timezone()))
 
 
-def today_plus_timedelta(aligned=True, **kwargs):
-    """
-    :param aligned: if True, result will have 00:00AM, else current time
-    :param kwargs: kwargs for timedelta()
-    :return: datetime instance
-    """
-    if aligned:
-        kwargs['days'] = kwargs.get('days', 0) + 1    # align to next day
-        return datetime_from_date(date.today() + timedelta(**kwargs))
-    return datetime.today() + timedelta(**kwargs)
-
-
-def parse_args(func, querydict, *keys):
+def parse_args(func, querydict, alloy_empty, *keys):
     """парсит аргументы keys из querydict с помощью func (может быть parse_date, parse_time, parse_datetime)"""
     ret = []
     for key in keys:
-        try:
-            d = func(querydict.get(key))
-            assert d is not None
-            ret.append(d)
-        except (TypeError, ValueError, AssertionError) as e:
-            raise FormError(key, str(e))
+        if alloy_empty and not querydict.get(key):
+            ret.append(None)
+        else:
+            try:
+                d = func(querydict.get(key))
+                assert d is not None
+                ret.append(d)
+            except (TypeError, ValueError, AssertionError) as e:
+                raise FormError(key, str(e))
     return ret
 
 

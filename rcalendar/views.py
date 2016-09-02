@@ -1,3 +1,5 @@
+import datetime
+
 from rest_framework import viewsets, mixins
 from rest_framework.decorators import list_route, detail_route
 from rest_framework.exceptions import ParseError, ValidationError
@@ -5,13 +7,14 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from django.db.models import Q
-from django.utils.dateparse import parse_date, parse_datetime
+from django.utils.dateparse import parse_datetime
+from django.utils.timezone import get_default_timezone
 from django.utils.translation import ugettext_lazy as _
 from django.shortcuts import get_object_or_404
 
-from . import serializers, permissions
+from . import serializers, permissions, exceptions
 from .models import Organization, Manager, Resource, Interval, ResourceScheduleInterval
-from .utils import parse_args, str_to_int
+from .utils import parse_args
 
 
 class CreateWithIdMixIn(mixins.CreateModelMixin):
@@ -33,17 +36,25 @@ class OrganizationViewSet(CreateWithIdMixIn,
 
     @detail_route()
     def intervals(self, request, pk):
-        start, end = parse_args(parse_date, request.GET, 'start', 'end')
+        start, end = parse_args(parse_datetime, request.GET, False, 'start', 'end')
         resource_id = request.GET.get('resource')
         org = self.get_object()
-        intervals = Interval.objects.between(start, end).filter(Q(organization=org) |                           # интервалы, относящиеся к текущей организации
-                                                                Q(kind=Interval.Kind_OrganizationReserved) |    # или к организациям вообще
-                                                                Q(kind=Interval.Kind_Unavailable) |
-                                                                Q(kind=Interval.Kind_ScheduledUnavailable))
+
+        intervals = Interval.objects.filter(Q(organization=org) |                           # интервалы, относящиеся к текущей организации
+                                            Q(kind=Interval.Kind_OrganizationReserved) |    # или к организациям вообще
+                                            Q(kind=Interval.Kind_Unavailable) |
+                                            Q(kind=Interval.Kind_ScheduledUnavailable))
         if resource_id:
             intervals = intervals.filter(resource_id=resource_id)
+            resources = Resource.objects.filter(id=resource_id)
         else:
-            intervals = intervals.filter(resource_id__in=org.get_resource_ids())
+            ids = org.get_resource_ids()
+            intervals = intervals.filter(resource_id__in=ids)
+            resources = Resource.objects.filter(id__in=ids)
+
+        resources.extend_schedules(end)             # продлеваем расписание до конечной просматриваемой даты
+        intervals.update_extendables(end)           # обновляем продлеваемые интервалы до конечной просматриваемой даты
+        intervals = intervals.between(start, end)   # и выбираем границы просмотра
 
         # фильтруем интервалы, попадающие в интервалы других организаций
         other_org_interval_ranges = {}     # ключ: resource_id, значения: [(start, end), ...]
@@ -142,7 +153,7 @@ class ResourceViewSet(CreateWithIdMixIn,
             organization = get_object_or_404(Organization, id=organization_id)
             try:
                 obj.set_participation(organization, fulltime)
-            except ValueError as e:
+            except (ValueError, exceptions.FormError) as e:
                 raise ValidationError({'detail': str(e)})
             return Response()
 
@@ -161,21 +172,21 @@ class ResourceViewSet(CreateWithIdMixIn,
 
     @detail_route(['POST'])
     def apply_schedule(self, request, pk):
-        instance = self.get_object()
-        current_week = str_to_int(request.data.get('current_week'))
-        next_weeks = str_to_int(request.data.get('next_weeks'))
+        start, end = parse_args(parse_datetime, request.data, True, 'start', 'end')
         intervals_raw = request.data.get('schedule_intervals')
         intervals = []
 
+        permanent = not start and not end
         do_clear = not intervals_raw
         if not do_clear:
             intervals_serializer = serializers.ResourceScheduleIntervalSerializer(
-                                        data=request.data.get('schedule_intervals'),
+                                        data=intervals_raw,
                                         many=True
                                     )
             intervals_serializer.is_valid(raise_exception=True)
             intervals = [ResourceScheduleInterval(**kwargs) for kwargs in intervals_serializer.validated_data]
 
+        instance = self.get_object()
         detail_str = _('Resource schedule has been %s.')
 
         if do_clear:
@@ -185,29 +196,45 @@ class ResourceViewSet(CreateWithIdMixIn,
         else:
             detail_str %= _('created %s')
 
-        if current_week and next_weeks:
+        if permanent:
             detail_str %= _('from now on')
-        elif current_week:
-            detail_str %= _('for current week')
-        elif next_weeks:
-            detail_str %= _('starting next week')
+        elif start and end:
+            detail_str %= _('from %s to %s') % (start.strftime('%x'), end.strftime('%x'))
+        elif start:
+            detail_str %= _('starting %s') % start.strftime('%x')
         else:
-            raise ValidationError({'detail': _('Neither current_week or next_weeks parameter is specified.')})
+            raise ValidationError({'detail': _('Missing argument "start".')})
 
-        instance.apply_schedule(intervals, current_week, next_weeks)
+        if not start:
+            start = datetime.datetime.now(get_default_timezone())
+
+        if not end:
+            end = start + Interval.EXTENDABLE_INTERVALS_MIN_DURATION
+
+        instance.apply_schedule(start, end, intervals, save_as_default=permanent)
+
+        if permanent or not instance.schedule_extended_date or instance.schedule_extended_date < end:
+            instance.schedule_extended_date = end
+            instance.save()
+
         return Response({'detail': detail_str})
 
     @detail_route()
     def intervals(self, request, pk):
-        start, end = parse_args(parse_date, request.GET, 'start', 'end')
+        start, end = parse_args(parse_datetime, request.GET, False, 'start', 'end')
         resource = self.get_object()
-        intervals = Interval.objects.between(start, end).filter(resource=resource)
+        intervals = Interval.objects.filter(resource=resource)
+
+        resource.extend_schedule(end)      # продлеваем расписание до конечной просматриваемой даты
+        intervals.update_extendables(end)  # обновляем продлеваемые интервалы до конечной просматриваемой даты
+
+        intervals = intervals.between(start, end)
         data = serializers.IntervalSerializer(intervals, many=True).data
         return Response(data)
 
     @detail_route(['POST'])
     def clear_unavailable_interval(self, request, pk):
-        start, end = parse_args(parse_datetime, request.data, 'start', 'end')
+        start, end = parse_args(parse_datetime, request.data, False, 'start', 'end')
         resource = self.get_object()
         result = resource.clear_unvailable_interval(start, end)
         if result:
@@ -219,7 +246,7 @@ class IntervalViewSet(mixins.CreateModelMixin,
                       mixins.UpdateModelMixin,
                       mixins.DestroyModelMixin,
                       viewsets.GenericViewSet):
-    queryset = Interval.objects.all()
+    queryset = Interval.objects.select_related('resource', 'organization')
     serializer_class = serializers.IntervalSerializer
     permission_classes = (permissions.IntervalPermission,)
 
