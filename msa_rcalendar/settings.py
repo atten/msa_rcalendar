@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     # 'django.contrib.staticfiles',
     # 'django.contrib.admin',
     # 'django.contrib.sites',
+    'django_congen',
     'rest_framework',
     'rcalendar',
 ]
@@ -86,6 +87,27 @@ MIDDLEWARE_CLASSES = [
 ROOT_URLCONF = 'msa_rcalendar.urls'
 
 WSGI_APPLICATION = 'msa_rcalendar.wsgi.application'
+
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [__TEMPLATE_DIR],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+                'django.template.context_processors.i18n',
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.template.context_processors.media',
+                'django.template.context_processors.csrf',
+                'django.template.context_processors.tz',
+                'django.template.context_processors.static',
+            ],
+        },
+    },
+]
 
 DATABASES = {
     'default': {
