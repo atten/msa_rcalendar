@@ -3,6 +3,7 @@ import datetime
 from rest_framework import viewsets, mixins
 from rest_framework.decorators import list_route, detail_route
 from rest_framework.exceptions import ParseError, ValidationError
+from rest_framework.serializers import ModelSerializer
 from rest_framework import status
 from rest_framework.response import Response
 
@@ -17,36 +18,57 @@ from .models import Organization, Manager, Resource, Interval, ResourceScheduleI
 from .utils import parse_args
 
 
-class CreateWithIdMixIn(mixins.CreateModelMixin):
+class SafeModelSerializerMixIn(object):
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            orig_model = self.serializer_class.Meta.model
+
+            class CreateInstanceSerializer(ModelSerializer):
+                class Meta:
+                    model = orig_model
+
+            return CreateInstanceSerializer
+
+        return self.serializer_class
+
+
+class FilterByAppViewSet:
     def create(self, request, *args, **kwargs):
-        id = request.data.get('id')
-        if id is not None:
-            obj, created = self.get_queryset().get_or_create(id=id)
-            return Response(self.get_serializer(obj).data, status=status.HTTP_201_CREATED)
-        else:
-            super().create(*args, **kwargs)
+        id = request.data.pop('id')
+        request.data['msa_id'] = id
+        request.data['app'] = request.app
+        return super().create(request, *args, **kwargs)
+
+    def get_queryset(self):
+        queryset = self.queryset
+        if hasattr(self.request, 'app'):
+            queryset = queryset.filter(app=self.request.app)
+        return queryset
 
 
-class OrganizationViewSet(CreateWithIdMixIn,
+class OrganizationViewSet(FilterByAppViewSet,
+                          mixins.CreateModelMixin,
                           mixins.RetrieveModelMixin,
                           mixins.DestroyModelMixin,
+                          SafeModelSerializerMixIn,
                           viewsets.GenericViewSet):
     queryset = Organization.objects.all()
     serializer_class = serializers.OrganizationSerializer
+    lookup_field = 'msa_id'
 
     @detail_route()
-    def intervals(self, request, pk):
+    def intervals(self, request, msa_id):
         start, end = parse_args(parse_datetime, request.GET, False, 'start', 'end')
-        resource_id = request.GET.get('resource')
+        resource_msa_id = request.GET.get('resource')
         org = self.get_object()
 
         intervals = Interval.objects.filter(Q(organization=org) |                           # интервалы, относящиеся к текущей организации
                                             Q(kind=Interval.Kind_OrganizationReserved) |    # или к организациям вообще
                                             Q(kind=Interval.Kind_Unavailable) |
                                             Q(kind=Interval.Kind_ScheduledUnavailable))
-        if resource_id:
-            intervals = intervals.filter(resource_id=resource_id)
-            resources = Resource.objects.filter(id=resource_id)
+        if resource_msa_id:
+            intervals = intervals.filter(resource__msa_id=resource_msa_id)
+            resources = Resource.objects.filter(msa_id=resource_msa_id)
         else:
             ids = org.get_resource_ids()
             intervals = intervals.filter(resource_id__in=ids)
@@ -76,21 +98,22 @@ class OrganizationViewSet(CreateWithIdMixIn,
                 filtered_intervals.append(i)
 
         data = serializers.IntervalSerializer(filtered_intervals, many=True).data
-
         return Response(data)
 
 
-class ManagerViewSet(CreateWithIdMixIn,
+class ManagerViewSet(FilterByAppViewSet,
+                     mixins.CreateModelMixin,
                      mixins.DestroyModelMixin,
                      viewsets.GenericViewSet):
     queryset = Manager.objects.all()
     serializer_class = serializers.ManagerSerializer
+    lookup_field = 'msa_id'
 
     def destroy(self, request, *args, **kwargs):
         if 'organization' in request.GET:           # удалить только из указанной организации
             instance = self.get_object()
-            organization_id = request.GET.get('organization')
-            organization = Organization.objects.get(id=organization_id)
+            organization_msa_id = request.GET.get('organization')
+            organization = Organization.objects.get(msa_id=organization_msa_id)
             instance.organizations.remove(organization)
             return Response()
 
@@ -98,59 +121,61 @@ class ManagerViewSet(CreateWithIdMixIn,
 
     @list_route(['POST'])
     def add_many(self, request):
-        ids = request.data.get('ids')
-        organization_id = request.data.get('organization')
+        msa_ids = request.data.get('ids')
+        organization_msa_id = request.data.get('organization')
 
-        if not ids:
-            raise ParseError({'ids': 'This fields is required.'})
-        if not organization_id:
-            raise ParseError({'organization': 'This fields is required.'})
+        if not msa_ids:
+            raise ParseError({'ids': _('This field is required.')})
+        if not organization_msa_id:
+            raise ParseError({'organization': _('This field is required.')})
 
-        organization = Organization.objects.get(id=organization_id)
+        organization = Organization.objects.get(msa_id=organization_msa_id)
         count = 0
-        for id in ids:
-            if not organization.managers.filter(id=id).exists():
-                obj, created = Manager.objects.get_or_create(id=id)
+        for msa_id in msa_ids:
+            if not organization.managers.filter(msa_id=msa_id).exists():
+                obj, created = Manager.objects.get_or_create(app=request.app, msa_id=msa_id)
                 organization.managers.add(obj)
                 count += 1
         return Response({'count': count}, status=status.HTTP_201_CREATED)
 
 
-class ResourceViewSet(CreateWithIdMixIn,
+class ResourceViewSet(FilterByAppViewSet,
+                      mixins.CreateModelMixin,
                       mixins.DestroyModelMixin,
                       viewsets.GenericViewSet):
     queryset = Resource.objects.all()
     serializer_class = serializers.ResourceSerializer
+    lookup_field = 'msa_id'
 
     @list_route(['POST'])
     def add_many(self, request):
-        ids = request.data.get('ids')
-        organization_id = request.data.get('organization')
+        msa_ids = request.data.get('ids')
+        msa_organization_id = request.data.get('organization')
         fulltime = request.data.get('fulltime')
-        if not ids:
-            raise ParseError({'ids': 'This fields is required.'})
+        if not msa_ids:
+            raise ParseError({'ids': _('This field is required.')})
 
         count = 0
-        if organization_id:
-            organization = get_object_or_404(Organization, id=organization_id)
+        if msa_organization_id:
+            organization = get_object_or_404(Organization, msa_id=msa_organization_id)
 
-        for id in ids:
-            obj, created = Resource.objects.get_or_create(id=id)
-            if organization_id:
+        for msa_id in msa_ids:
+            obj, created = Resource.objects.get_or_create(app=request.app, msa_id=msa_id)
+            if msa_organization_id:
                 obj.set_participation(organization, fulltime)
             if created:
                 count += 1
         return Response({'created': count}, status=status.HTTP_201_CREATED)
 
     @detail_route(['PATCH', 'DELETE'])
-    def participation(self, request, pk):
+    def participation(self, request, msa_id):
         obj = self.get_object()
 
         if request.method == 'PATCH':
-            organization_id = request.data.get('organization')
+            msa_organization_id = request.data.get('organization')
             fulltime = request.data.get('fulltime')
 
-            organization = get_object_or_404(Organization, id=organization_id)
+            organization = get_object_or_404(Organization, msa_id=msa_organization_id)
             try:
                 obj.set_participation(organization, fulltime)
             except (ValueError, exceptions.FormError) as e:
@@ -158,20 +183,20 @@ class ResourceViewSet(CreateWithIdMixIn,
             return Response()
 
         elif request.method == 'DELETE':
-            organization_id = request.GET.get('organization')
+            msa_organization_id = request.GET.get('organization')
 
-            organization = get_object_or_404(Organization, id=organization_id)
+            organization = get_object_or_404(Organization, msa_id=msa_organization_id)
             obj.dismiss_from_organization(organization)
             return Response()
 
     @detail_route()
-    def schedule(self, request, pk):
+    def schedule(self, request, msa_id):
         instance = self.get_object()
         serializer = serializers.ResourceScheduleSerializer(instance)
         return Response(serializer.data)
 
     @detail_route(['POST'])
-    def apply_schedule(self, request, pk):
+    def apply_schedule(self, request, msa_id):
         start, end = parse_args(parse_datetime, request.data, True, 'start', 'end')
         intervals_raw = request.data.get('schedule_intervals')
         intervals = []
@@ -220,7 +245,7 @@ class ResourceViewSet(CreateWithIdMixIn,
         return Response({'detail': detail_str})
 
     @detail_route()
-    def intervals(self, request, pk):
+    def intervals(self, request, msa_id):
         start, end = parse_args(parse_datetime, request.GET, False, 'start', 'end')
         resource = self.get_object()
         intervals = Interval.objects.filter(resource=resource)
@@ -233,7 +258,7 @@ class ResourceViewSet(CreateWithIdMixIn,
         return Response(data)
 
     @detail_route(['POST'])
-    def clear_unavailable_interval(self, request, pk):
+    def clear_unavailable_interval(self, request, msa_id):
         start, end = parse_args(parse_datetime, request.data, False, 'start', 'end')
         resource = self.get_object()
         result = resource.clear_unvailable_interval(start, end)
@@ -246,16 +271,16 @@ class IntervalViewSet(mixins.CreateModelMixin,
                       mixins.UpdateModelMixin,
                       mixins.DestroyModelMixin,
                       viewsets.GenericViewSet):
-    queryset = Interval.objects.select_related('resource', 'organization')
+    queryset = Interval.objects.select_related('resource', 'organization', 'manager')
     serializer_class = serializers.IntervalSerializer
-    permission_classes = (permissions.IntervalPermission,)
+    permission_classes = (permissions.HasValidApiKey, permissions.IntervalPermission,)
 
     def create(self, request, *args, **kwargs):
         kind = request.data.get('kind')
         if isinstance(kind, str):
             kind = Interval.kind_from_str(kind)
             request.data['kind'] = kind
-        return super().create(request, *args, **kwargs)     # права по созданию проверяются в методе Interval.save()
+        return super().create(request, *args, **kwargs)
 
     @list_route(['DELETE'])
     def delete_many(self, request):

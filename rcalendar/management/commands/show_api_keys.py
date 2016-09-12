@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from rcalendar.models import ApiKey
+from ...models import ApiKey
 
 
 class Command(BaseCommand):
@@ -7,4 +7,4 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         for k in ApiKey.objects.all():
-            print(k.key)
+            print('%s app=%s' % (k.key, k.app))

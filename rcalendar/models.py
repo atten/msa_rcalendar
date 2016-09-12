@@ -10,20 +10,29 @@ from django.utils.timezone import get_default_timezone, UTC
 from . import utils, exceptions
 
 
-class Organization(models.Model):
-    def get_resource_ids(self, fulltime=True, parttime=True):
+class ApiModelMixIn(models.Model):
+    app = models.CharField(max_length=30)
+    msa_id = models.IntegerField()
+
+    class Meta:
+        abstract = True
+
+
+class Organization(ApiModelMixIn):
+    def get_resource_ids(self, fulltime=True, parttime=True, msa_ids=False):
         ret = []
+        lookup_arg = 'msa_id' if msa_ids else 'id'
         if fulltime:
-            ret += self.fulltime_resources.values_list('id', flat=True)
+            ret += self.fulltime_resources.values_list(lookup_arg, flat=True)
         if parttime:
-            ret += self.parttime_resources.values_list('id', flat=True)
+            ret += self.parttime_resources.values_list(lookup_arg, flat=True)
         return ret
 
     def __str__(self):
         return '%s: %d' % (self._meta.object_name, self.id)
 
 
-class Manager(models.Model):
+class Manager(ApiModelMixIn):
     organizations = models.ManyToManyField(Organization, related_name="managers")
 
 
@@ -33,7 +42,7 @@ class ResourceQuerySet(QuerySet):
             r.extend_schedule(end)
 
 
-class Resource(models.Model):
+class Resource(ApiModelMixIn):
     fulltime_organization = models.ForeignKey(Organization, related_name='fulltime_resources', null=True)
     parttime_organizations = models.ManyToManyField(Organization, related_name='parttime_resources')
     schedule_extended_date = models.DateTimeField(null=True)
@@ -257,12 +266,12 @@ class Interval(models.Model):
                 return choice[0]
         return 0
 
-    def get_object(self, id_only=False):
+    def get_object(self, msa_id_only=False):
         """возвращает менеджера или организацию, к которой относится"""
         if self.kind == self.Kind_OrganizationReserved:
-            return self.organization_id if id_only else self.organization
+            return self.organization.msa_id if msa_id_only and self.organization else self.organization
         if self.kind == self.Kind_ManagerReserved:
-            return self.manager_id if id_only else self.manager
+            return self.manager.msa_id if msa_id_only and self.manager else self.manager
         return None
 
     @property
@@ -406,3 +415,4 @@ class ApiKey(models.Model):
     key = models.UUIDField(unique=True, default=uuid.uuid4, editable=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    app = models.CharField(max_length=30)
