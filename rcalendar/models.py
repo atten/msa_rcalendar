@@ -8,6 +8,7 @@ from django.utils.translation import ugettext_lazy as _
 from django.utils.timezone import get_default_timezone, UTC
 
 from . import utils, exceptions
+from .middleware import EventDispatchMiddleware as EventDispatcher
 
 
 class ApiModelMixIn(models.Model):
@@ -29,7 +30,7 @@ class Organization(ApiModelMixIn):
         return ret
 
     def __str__(self):
-        return '%s: %d' % (self._meta.object_name, self.id)
+        return '%s: %d' % (self._meta.object_name, self.msa_id)
 
 
 class Manager(ApiModelMixIn):
@@ -51,6 +52,9 @@ class Resource(ApiModelMixIn):
 
     def is_fulltime_member(self, organization):
         return self.fulltime_organization == organization
+
+    def is_parttime_member(self, organization):
+        return organization in self.parttime_organizations.all()
 
     def update_organization_reserve(self):
         """резервирует (продлевает) время ресурса для организации на период по умолчанию"""
@@ -77,15 +81,22 @@ class Resource(ApiModelMixIn):
 
     def set_participation(self, organization, fulltime):
         if fulltime:
-            if self.fulltime_organization and not self.is_fulltime_member(organization):
-                raise ValueError(_('%s is already full-time member of another organization') % str(self))
+            if self.fulltime_organization:
+                if self.is_fulltime_member(organization):
+                    raise ValueError(_('%s is already a full-time member of this organization.') % str(self))
+                else:
+                    raise ValueError(_('%s is already a full-time member of another organization.') % str(self))
             self.fulltime_organization = organization
             self.parttime_organizations.remove(organization)
             self.update_organization_reserve()
+            EventDispatcher.push_event_to_responce(kind='become-fulltime', resource=self.msa_id, organization=organization.msa_id)
         else:
+            if self.is_parttime_member(organization):
+                raise ValueError(_('%s is already a part-time member of this organization.') % str(self))
             if self.is_fulltime_member(organization):   # перевод вне штата
                 self.fulltime_organization = None
                 self.strip_organization_time(organization)
+                EventDispatcher.push_event_to_responce(kind='become-parttime', resource=self.msa_id, organization=organization.msa_id)
             self.parttime_organizations.add(organization)
         self.save()
 
@@ -178,7 +189,7 @@ class Resource(ApiModelMixIn):
             self.save()
 
     def __str__(self):
-        return '%s: %d' % (self._meta.object_name, self.id)
+        return '%s: %d' % (self._meta.object_name, self.msa_id)
 
     # def save(self, *args, **kwargs):
     #     created = self.pk is None

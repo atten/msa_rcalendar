@@ -16,6 +16,7 @@ from django.shortcuts import get_object_or_404
 from . import serializers, permissions, exceptions
 from .models import Organization, Manager, Resource, Interval, ResourceScheduleInterval
 from .utils import parse_args
+from .decorators import append_events_data
 
 
 class SafeModelSerializerMixIn(object):
@@ -168,6 +169,7 @@ class ResourceViewSet(FilterByAppViewSet,
         return Response({'created': count}, status=status.HTTP_201_CREATED)
 
     @detail_route(['PATCH', 'DELETE'])
+    @append_events_data()
     def participation(self, request, msa_id):
         obj = self.get_object()
 
