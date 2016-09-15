@@ -1,34 +1,42 @@
 from rest_framework import serializers
-from .models import Organization, Manager, Resource, Interval, ResourceScheduleInterval
+from .models import Organization, Interval, ResourceMembership, ScheduleInterval
 from .fields import MsaIdRelatedField
+
+
+class ScheduleIntervalSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ScheduleInterval
+        fields = ('start', 'end', 'day_of_week')
+
+
+class ResourceMembershipScheduleSerializer(serializers.ModelSerializer):
+    schedule_intervals = ScheduleIntervalSerializer(many=True)
+
+    class Meta:
+        model = ResourceMembership
+        fields = ('schedule_intervals',)
+
+
+class ResourceMembershipShortSerializer(serializers.ModelSerializer):
+    serializer_related_field = MsaIdRelatedField
+
+    class Meta:
+        model = ResourceMembership
+        fields = ('resource', 'has_schedule')
 
 
 class OrganizationSerializer(serializers.ModelSerializer):
     manager_ids = serializers.SerializerMethodField()
-    fulltime_resource_ids = serializers.SerializerMethodField()
-    parttime_resource_ids = serializers.SerializerMethodField()
+    resource_members = ResourceMembershipShortSerializer(many=True)
 
     @staticmethod
     def get_manager_ids(obj):
         return obj.managers.values_list('msa_id', flat=True)
 
-    @staticmethod
-    def get_fulltime_resource_ids(obj):
-        return obj.get_resource_ids(fulltime=True, parttime=False, msa_ids=True)
-
-    @staticmethod
-    def get_parttime_resource_ids(obj):
-        return obj.get_resource_ids(fulltime=False, parttime=True, msa_ids=True)
-
     class Meta:
         model = Organization
-        fields = ('manager_ids', 'fulltime_resource_ids', 'parttime_resource_ids')
-
-
-class ManagerSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = Manager
+        fields = ('manager_ids', 'resource_members')
 
 
 class IntervalSerializer(serializers.ModelSerializer):
@@ -36,7 +44,7 @@ class IntervalSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Interval
-        fields = ('id', 'start', 'end', 'kind', 'resource', 'organization', 'manager', 'comment', 'is_extendable')
+        fields = ('id', 'start', 'end', 'kind', 'resource', 'organization', 'manager', 'comment')
 
     def to_representation(self, instance):
         """добавляет к представлению kind в виде строки и объект, если есть"""
@@ -46,24 +54,3 @@ class IntervalSerializer(serializers.ModelSerializer):
         if obj_id:
             ret['object'] = obj_id
         return ret
-
-
-class ResourceScheduleIntervalSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = ResourceScheduleInterval
-        fields = ('start', 'end', 'day_of_week')
-
-
-class ResourceSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = Resource
-
-
-class ResourceScheduleSerializer(serializers.ModelSerializer):
-    schedule_intervals = ResourceScheduleIntervalSerializer(many=True)
-
-    class Meta:
-        model = Resource
-        fields = ('schedule_intervals',)

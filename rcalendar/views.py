@@ -14,7 +14,7 @@ from django.utils.translation import ugettext_lazy as _
 from django.shortcuts import get_object_or_404
 
 from . import serializers, permissions, exceptions
-from .models import Organization, Manager, Resource, Interval, ResourceScheduleInterval
+from .models import Organization, Manager, Resource, Interval, ScheduleInterval, ResourceMembership
 from .utils import parse_args
 from .decorators import append_events_data
 
@@ -63,21 +63,19 @@ class OrganizationViewSet(FilterByAppViewSet,
         resource_msa_id = request.GET.get('resource')
         org = self.get_object()
 
-        intervals = Interval.objects.filter(Q(organization=org) |                           # интервалы, относящиеся к текущей организации
-                                            Q(kind=Interval.Kind_OrganizationReserved) |    # или к организациям вообще
-                                            Q(kind=Interval.Kind_Unavailable) |
-                                            Q(kind=Interval.Kind_ScheduledUnavailable))
+        intervals = Interval.objects.between(start, end).filter(Q(organization=org) |                           # интервалы, относящиеся к текущей организации
+                                                                Q(kind=Interval.Kind_OrganizationReserved) |    # или к организациям вообще
+                                                                Q(kind=Interval.Kind_Unavailable))
+        memberships = org.resource_members
+
         if resource_msa_id:
             intervals = intervals.filter(resource__msa_id=resource_msa_id)
-            resources = Resource.objects.filter(msa_id=resource_msa_id)
+            memberships = memberships.filter(resource__msa_id=resource_msa_id)
         else:
-            ids = org.get_resource_ids()
-            intervals = intervals.filter(resource_id__in=ids)
-            resources = Resource.objects.filter(id__in=ids)
+            intervals = intervals.filter(resource_id__in=org.get_resource_ids())
 
-        resources.extend_schedules(end)             # продлеваем расписание до конечной просматриваемой даты
-        intervals.update_extendables(end)           # обновляем продлеваемые интервалы до конечной просматриваемой даты
-        intervals = intervals.between(start, end)   # и выбираем границы просмотра
+        for membership in memberships.prefetch_related('schedule_intervals'):
+            membership.extend_schedule(end)  # продлеваем расписание до конечной просматриваемой даты
 
         # фильтруем интервалы, попадающие в интервалы других организаций
         other_org_interval_ranges = {}     # ключ: resource_id, значения: [(start, end), ...]
@@ -90,7 +88,7 @@ class OrganizationViewSet(FilterByAppViewSet,
                 other_org_interval_ranges.setdefault(i.resource_id, [])
                 other_org_interval_ranges[i.resource_id].append((i.start, i.end))
 
-            if i.resource_id in other_org_interval_ranges and i.kind in (i.Kind_Unavailable, i.Kind_ScheduledUnavailable):  # найден интервал ресурса
+            if i.resource_id in other_org_interval_ranges and i.kind != i.Kind_OrganizationReserved:  # найден интервал ресурса, попадающий в др. орг-ию
                 for r in other_org_interval_ranges[i.resource_id]:
                     if r[0] <= i.start and r[1] >= i.end:
                         add = False
@@ -107,7 +105,7 @@ class ManagerViewSet(FilterByAppViewSet,
                      mixins.DestroyModelMixin,
                      viewsets.GenericViewSet):
     queryset = Manager.objects.all()
-    serializer_class = serializers.ManagerSerializer
+    # serializer_class = serializers.ManagerSerializer
     lookup_field = 'msa_id'
 
     def destroy(self, request, *args, **kwargs):
@@ -145,92 +143,87 @@ class ResourceViewSet(FilterByAppViewSet,
                       mixins.DestroyModelMixin,
                       viewsets.GenericViewSet):
     queryset = Resource.objects.all()
-    serializer_class = serializers.ResourceSerializer
+    # serializer_class = serializers.ResourceSerializer
     lookup_field = 'msa_id'
 
     @list_route(['POST'])
     def add_many(self, request):
         msa_ids = request.data.get('ids')
         msa_organization_id = request.data.get('organization')
-        fulltime = request.data.get('fulltime')
+
         if not msa_ids:
             raise ParseError({'ids': _('This field is required.')})
 
         count = 0
+        joined = 0
         if msa_organization_id:
             organization = get_object_or_404(Organization, msa_id=msa_organization_id)
 
         for msa_id in msa_ids:
             obj, created = Resource.objects.get_or_create(app=request.app, msa_id=msa_id)
             if msa_organization_id:
-                obj.set_participation(organization, fulltime)
+                obj.join_organization(organization, raise_if_joined=False)
+                joined += 1
             if created:
                 count += 1
-        return Response({'created': count}, status=status.HTTP_201_CREATED)
+        return Response({'created': count, 'joined': joined}, status=status.HTTP_201_CREATED)
 
-    @detail_route(['PATCH', 'DELETE'])
-    @append_events_data()
-    def participation(self, request, msa_id):
+    @detail_route(['GET', 'PUT', 'DELETE'])
+    # @append_events_data()
+    def membership(self, request, msa_id):
         obj = self.get_object()
+        msa_organization_id = request.data.get('organization') or request.GET.get('organization')
+        organization = get_object_or_404(Organization, msa_id=msa_organization_id)
 
-        if request.method == 'PATCH':
-            msa_organization_id = request.data.get('organization')
-            fulltime = request.data.get('fulltime')
-
-            organization = get_object_or_404(Organization, msa_id=msa_organization_id)
-            try:
-                obj.set_participation(organization, fulltime)
-            except (ValueError, exceptions.FormError) as e:
-                raise ValidationError({'detail': str(e)})
-            return Response()
-
-        elif request.method == 'DELETE':
-            msa_organization_id = request.GET.get('organization')
-
-            organization = get_object_or_404(Organization, msa_id=msa_organization_id)
-            obj.dismiss_from_organization(organization)
-            return Response()
-
-    @detail_route()
-    def schedule(self, request, msa_id):
-        instance = self.get_object()
-        serializer = serializers.ResourceScheduleSerializer(instance)
-        return Response(serializer.data)
+        try:
+            if request.method == 'GET':
+                membership = obj.organization_memberships.get(organization=organization)
+                serializer = serializers.ResourceMembershipScheduleSerializer(membership)
+                return Response(serializer.data)
+            elif request.method == 'PUT':
+                obj.join_organization(organization, raise_if_joined=True)
+            elif request.method == 'DELETE':
+                obj.dismiss_from_organization(organization)
+        except (ValueError, exceptions.FormError) as e:
+            raise ValidationError({'detail': str(e)})
+        return Response()
 
     @detail_route(['POST'])
     def apply_schedule(self, request, msa_id):
+        organization_msa_id = request.data.get('organization') or request.GET.get('organization')
         start, end = parse_args(parse_datetime, request.data, True, 'start', 'end')
         intervals_raw = request.data.get('schedule_intervals')
         intervals = []
 
-        permanent = not start and not end
+        permanent = not end
         do_clear = not intervals_raw
         if not do_clear:
-            intervals_serializer = serializers.ResourceScheduleIntervalSerializer(
+            intervals_serializer = serializers.ScheduleIntervalSerializer(
                                         data=intervals_raw,
                                         many=True
                                     )
             intervals_serializer.is_valid(raise_exception=True)
-            intervals = [ResourceScheduleInterval(**kwargs) for kwargs in intervals_serializer.validated_data]
+            intervals = [ScheduleInterval(**kwargs) for kwargs in intervals_serializer.validated_data]
 
-        instance = self.get_object()
-        detail_str = _('Resource schedule has been %s.')
+        membership = get_object_or_404(ResourceMembership,
+                                       resource__msa_id=msa_id, organization__msa_id=organization_msa_id)
+        detail_str = _('Resource schedule for this organization has been %s.')
 
         if do_clear:
             detail_str %= _('cleared %s')
-        elif instance.schedule_intervals.count():
+        elif membership.schedule_intervals.count():
             detail_str %= _('updated %s')
         else:
             detail_str %= _('created %s')
 
-        if permanent:
-            detail_str %= _('from now on')
-        elif start and end:
+        if start and end:
             detail_str %= _('from %s to %s') % (start.strftime('%x'), end.strftime('%x'))
         elif start:
             detail_str %= _('starting %s') % start.strftime('%x')
+        elif end:
+            detail_str %= _('to %s') % end.strftime('%x')
         else:
-            raise ValidationError({'detail': _('Missing argument "start".')})
+            detail_str %= _('from now on')
 
         if not start:
             start = datetime.datetime.now(get_default_timezone())
@@ -238,24 +231,24 @@ class ResourceViewSet(FilterByAppViewSet,
         if not end:
             end = start + Interval.EXTENDABLE_INTERVALS_MIN_DURATION
 
-        instance.apply_schedule(start, end, intervals, save_as_default=permanent)
+        if membership.apply_schedule(start, end, intervals, save_as_default=permanent):
+            if permanent or not membership.schedule_extended_date or membership.schedule_extended_date < end:
+                membership.schedule_extended_date = end
+                membership.save()
+        else:
+            detail_str = _('Schedule wasn\'t changed.')
 
-        if permanent or not instance.schedule_extended_date or instance.schedule_extended_date < end:
-            instance.schedule_extended_date = end
-            instance.save()
-
-        return Response({'detail': detail_str})
+        return Response({'detail': detail_str, 'has_schedule': membership.has_schedule})
 
     @detail_route()
     def intervals(self, request, msa_id):
         start, end = parse_args(parse_datetime, request.GET, False, 'start', 'end')
         resource = self.get_object()
-        intervals = Interval.objects.filter(resource=resource)
 
-        resource.extend_schedule(end)      # продлеваем расписание до конечной просматриваемой даты
-        intervals.update_extendables(end)  # обновляем продлеваемые интервалы до конечной просматриваемой даты
+        for membership in resource.organization_memberships.all():
+            membership.extend_schedule(end)      # продлеваем расписание до конечной просматриваемой даты
 
-        intervals = intervals.between(start, end)
+        intervals = Interval.objects.between(start, end).filter(resource=resource)
         data = serializers.IntervalSerializer(intervals, many=True).data
         return Response(data)
 

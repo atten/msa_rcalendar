@@ -20,14 +20,8 @@ class ApiModelMixIn(models.Model):
 
 
 class Organization(ApiModelMixIn):
-    def get_resource_ids(self, fulltime=True, parttime=True, msa_ids=False):
-        ret = []
-        lookup_arg = 'msa_id' if msa_ids else 'id'
-        if fulltime:
-            ret += self.fulltime_resources.values_list(lookup_arg, flat=True)
-        if parttime:
-            ret += self.parttime_resources.values_list(lookup_arg, flat=True)
-        return ret
+    def get_resource_ids(self):
+        return self.resource_members.values_list('resource_id', flat=True)
 
     def __str__(self):
         return '%s: %d' % (self._meta.object_name, self.msa_id)
@@ -37,167 +31,23 @@ class Manager(ApiModelMixIn):
     organizations = models.ManyToManyField(Organization, related_name="managers")
 
 
-class ResourceQuerySet(QuerySet):
-    def extend_schedules(self, end):
-        for r in self.prefetch_related('schedule_intervals'):
-            r.extend_schedule(end)
-
-
 class Resource(ApiModelMixIn):
-    fulltime_organization = models.ForeignKey(Organization, related_name='fulltime_resources', null=True)
-    parttime_organizations = models.ManyToManyField(Organization, related_name='parttime_resources')
-    schedule_extended_date = models.DateTimeField(null=True)
-
-    objects = ResourceQuerySet.as_manager()
-
-    def is_fulltime_member(self, organization):
-        return self.fulltime_organization == organization
-
-    def is_parttime_member(self, organization):
-        return organization in self.parttime_organizations.all()
-
-    def update_organization_reserve(self):
-        """резервирует (продлевает) время ресурса для организации на период по умолчанию"""
-        if not self.fulltime_organization_id:
-            return
-        start = datetime.datetime.now(get_default_timezone())
-        end = start + Interval.EXTENDABLE_INTERVALS_MIN_DURATION
-        i = Interval(resource=self,
-                     organization=self.fulltime_organization,
-                     kind=Interval.Kind_OrganizationReserved,
-                     start=start,
-                     end=end)
-        i.save()
-
-    def strip_organization_time(self, organization):
-        """
-        сокращает выделенное время ресурса для организации до окончания времени,
-        выделенного каким-либо менеджером данной орг-ии
-        """
-        now = datetime.datetime.now(get_default_timezone())
-        for i in Interval.objects.at_date(now).filter(resource=self, organization=organization):
-            i.end = now
-            i.save()
-
-    def set_participation(self, organization, fulltime):
-        if fulltime:
-            if self.fulltime_organization:
-                if self.is_fulltime_member(organization):
-                    raise ValueError(_('%s is already a full-time member of this organization.') % str(self))
-                else:
-                    raise ValueError(_('%s is already a full-time member of another organization.') % str(self))
-            self.fulltime_organization = organization
-            self.parttime_organizations.remove(organization)
-            self.update_organization_reserve()
-            EventDispatcher.push_event_to_responce(kind='become-fulltime', resource=self.msa_id, organization=organization.msa_id)
-        else:
-            if self.is_parttime_member(organization):
-                raise ValueError(_('%s is already a part-time member of this organization.') % str(self))
-            if self.is_fulltime_member(organization):   # перевод вне штата
-                self.fulltime_organization = None
-                self.strip_organization_time(organization)
-                EventDispatcher.push_event_to_responce(kind='become-parttime', resource=self.msa_id, organization=organization.msa_id)
-            self.parttime_organizations.add(organization)
-        self.save()
+    def join_organization(self, organization, raise_if_joined=False):
+        obj, created = ResourceMembership.objects.get_or_create(resource=self, organization=organization)
+        if not created and raise_if_joined:
+            raise ValueError(_('%s is already member of this organization.') % str(self))
 
     def dismiss_from_organization(self, organization):
-        if self.fulltime_organization_id == organization.id:
-            self.fulltime_organization = None
-            self.save()
-        else:
-            self.parttime_organizations.remove(organization)
-        self.strip_organization_time(organization)
+        obj = ResourceMembership.objects.get(resource=self, organization=organization)
+        obj.strip_organization_time()
+        obj.delete()
 
     def clear_unvailable_interval(self, start, end):
         i = Interval(resource=self, start=start, end=end, kind=Interval.Kind_Unavailable)
-        changed1 = i.clear_existing()
-        i.kind = Interval.Kind_ScheduledUnavailable
-        changed2 = i.clear_existing()
-        return changed1 or changed2
-
-    def apply_schedule(self, start, end, schedule_intervals=None, save_as_default=False):
-        """
-        создает новые интервалы ресурса
-        :param schedule_intervals: список интервалов графика (если None, берет имеющиеся)
-        :param start: дата и время начала
-        :param end: дата и время окончания
-        """
-        if not (schedule_intervals or self.schedule_intervals.count()):
-            return False
-        used_scedule_intervals = schedule_intervals if schedule_intervals is not None else self.schedule_intervals.all()
-        start = start or datetime.datetime.now(get_default_timezone())
-
-        # создаем новый интервал, из которого будем вычленять интервалы работы
-        new_big_interval = Interval(resource=self, kind=Interval.Kind_ScheduledUnavailable, start=start, end=end)
-        # очищаем имеющиеся для выбранного отрезка времени
-        new_big_interval.clear_existing()
-
-        intervals = []      # создаваемые интервалы
-        if used_scedule_intervals:
-            intervals = [new_big_interval]
-
-        schedule_intervals_map = {}     # раскладываем интервалы графика в словарь {день_недели: интервал графика}
-        for si in used_scedule_intervals:
-            if si.start.tzinfo is None:                  # добавляем временную зону
-                si.start = si.start.replace(tzinfo=UTC())
-            if si.end.tzinfo is None:
-                si.end = si.end.replace(tzinfo=UTC())
-
-            schedule_intervals_map.setdefault(si.day_of_week, [])
-            schedule_intervals_map[si.day_of_week].append(si)
-
-        for i in range(max((end - start).days, 1)):      # перебираем дни с первого по последний, начиная с 0
-            apply_date = (start + datetime.timedelta(days=i)).date()
-            week_day = (apply_date.weekday() + 1) % 7    # в нашем случае первый день недели - ВС, а не ПН
-            if week_day not in schedule_intervals_map:
-                continue
-            for si in schedule_intervals_map[week_day]:
-                apply_start = datetime.datetime.combine(apply_date, si.start)
-                apply_end = datetime.datetime.combine(apply_date, si.end)
-                # если нач. дата больше конечной (такое бывает, например,
-                # когда местное время старта меньше UTC смещения и преобразуется в UTC)
-                if apply_start > apply_end:
-                    apply_start -= datetime.timedelta(days=1)
-                interval = Interval(start=apply_start, end=apply_end)
-                # дробим список недоступных интервалов, вычленяя из него интервалы доступности
-                interval.clear_existing(intervals)
-
-        for i in intervals:                        # убираем короткие интервалы
-            if i.end - i.start < Interval.JOIN_GAP:
-                intervals.remove(i)
-
-        intervals.sort(key=lambda d: d.start)      # сортируем получившиеся интервалы по возрастанию
-        if len(intervals):
-            intervals[0].join_existing()           # склеиваем первый (и последний) с имеющимися
-            if len(intervals) > 1:
-                intervals[-1].join_existing()
-        Interval.objects.bulk_create(intervals)    # записываем получившиеся интервалы
-
-        # сохраняем расписание
-        if save_as_default and schedule_intervals is not None:
-            for si in schedule_intervals:
-                si.resource = self
-            self.schedule_intervals.all().delete()
-            ResourceScheduleInterval.objects.bulk_create(schedule_intervals)
-        return True
-
-    def extend_schedule(self, end):
-        if self.schedule_extended_date and self.schedule_extended_date >= end:
-            return
-        if self.apply_schedule(self.schedule_extended_date, end):
-            self.schedule_extended_date = end
-            self.save()
+        return i.clear_existing()
 
     def __str__(self):
         return '%s: %d' % (self._meta.object_name, self.msa_id)
-
-    # def save(self, *args, **kwargs):
-    #     created = self.pk is None
-    #     super().save(*args, **kwargs)
-    #
-    #     if created:
-    #         ResourceScheduleInterval.make_resource_schedule(self)        # всем ресурсам по дефолтному графику
-    #         self.apply_schedule(current_week=True, next_weeks=True)
 
 
 class IntervalQuerySet(QuerySet):
@@ -231,15 +81,6 @@ class IntervalQuerySet(QuerySet):
             qs = qs.exclude(id=interval.id)
         return qs
 
-    def update_extendables(self, end):
-        extendable_ids = []
-        for interval in self.filter(kind=Interval.Kind_OrganizationReserved, end__lt=end).select_related('resource', 'organization'):
-            if interval.is_extendable:
-                extendable_ids.append(interval.id)
-        if not extendable_ids:
-            return False
-        return self.filter(id__in=extendable_ids).update(end=end)
-
 
 class Interval(models.Model):
     EXTENDABLE_INTERVALS_MIN_DURATION = datetime.timedelta(days=40)
@@ -247,14 +88,12 @@ class Interval(models.Model):
 
     Kind_OrganizationReserved = 0
     Kind_ManagerReserved = 10
-    Kind_ScheduledUnavailable = 90
     Kind_Unavailable = 100
 
     KIND_CHOICES = (
         (Kind_OrganizationReserved, 'organization'),
         (Kind_ManagerReserved, 'manager'),
         (Kind_Unavailable, 'unavailable'),
-        (Kind_ScheduledUnavailable, 'scheduled unavailable'),
     )
 
     start = models.DateTimeField()
@@ -285,22 +124,41 @@ class Interval(models.Model):
             return self.manager.msa_id if msa_id_only and self.manager else self.manager
         return None
 
-    @property
-    def is_extendable(self):
-        return self.kind == Interval.Kind_OrganizationReserved and self.organization_id == self.resource.fulltime_organization_id
-
-    def join_existing(self, timedelta='default'):
-        """склеивает с имеющимися интервалами с совпадающими параметрами, удаляя их"""
+    def join_existing(self, existing=None, timedelta='default'):
+        """
+        склеивает с имеющимися интервалами с совпадающими параметрами
+        :param timedelta: временной промежуток для склеивания
+        :param existing: если не указан, интервалы берутся из базы, склеиваемые удаляются. Если указан список интервалов, то склеиваемый добавляется к ним
+        """
         if timedelta == 'default':
             timedelta = Interval.JOIN_GAP
-        qs = Interval.objects.similar(self).between(self.start - timedelta, self.end + timedelta)
-        d = qs.aggregate(Min('start'), Max('end'))
-        if d['start__min'] and d['end__max']:
-            self.start = min(d['start__min'], self.start)
-            self.end = max(d['end__max'], self.end)
-            qs.delete()
-            return True
-        return False
+        qs = existing if existing is not None else Interval.objects.similar(self).between(self.start - timedelta, self.end + timedelta)
+        do_save = isinstance(qs, models.QuerySet)
+        do_append = isinstance(existing, list)
+        changed = False
+
+        if do_save:
+            d = qs.aggregate(Min('start'), Max('end'))
+            if d['start__min'] and d['end__max']:
+                self.start = min(d['start__min'], self.start)
+                self.end = max(d['end__max'], self.end)
+                qs.delete()
+                changed = True
+        elif do_append:
+            for interval in existing:
+                if interval.start >= self.start and interval.end <= self.end:   # имеющийся внутри
+                    existing.remove(interval)
+                    changed = True
+                elif interval.start < self.start < interval.end or (self.start > interval.end and self.start - interval.end < timedelta):  # пересекаются или соприкасаются
+                    self.start = interval.start
+                    existing.remove(interval)
+                    changed = True
+                elif interval.start < self.end < interval.end or (interval.start > self.end and interval.start - self.end < timedelta):   # пересекаются или соприкасаются
+                    self.end = interval.end
+                    existing.remove(interval)
+                    changed = True
+
+        return changed
 
     def clear_existing(self, existing=None):
         """
@@ -387,39 +245,119 @@ class Interval(models.Model):
                                .exclude(organization=self.organization):
                 raise exceptions.FormError('', _('This period falls within another organization.'))
 
-        elif self.kind == Interval.Kind_Unavailable:
-            for i in Interval.objects.between(self.start, self.end) \
-                                     .filter(kind=Interval.Kind_ScheduledUnavailable,
-                                             resource=self.resource):
-                if i.start <= self.start and i.end >= self.end:
-                    raise exceptions.FormError('', _('This period falls within scheduled unavailable time.'))
-                elif i.start <= self.start:
-                    self.start = i.end
-                elif i.end >= self.end:
-                    self.end = i.start
-                else:
-                    next_part = Interval(start=i.end,
-                                         end=self.end,
-                                         resource=self.resource,
-                                         kind=self.kind,
-                                         manager=self.manager,
-                                         comment=self.comment)
-                    next_part.save(join_existing, *args, **kwargs)
-                    self.end = i.start
-
         if join_existing:
             self.join_existing()
         super().save(*args, **kwargs)
 
 
-class ResourceScheduleInterval(models.Model):
-    resource = models.ForeignKey("Resource", related_name='schedule_intervals', on_delete=models.CASCADE)
+class ResourceMembership(models.Model):
+    resource = models.ForeignKey(Resource, related_name='organization_memberships', on_delete=models.CASCADE)
+    organization = models.ForeignKey(Organization, related_name='resource_members', on_delete=models.CASCADE)
+    schedule_extended_date = models.DateTimeField(null=True)
+
+    class Meta:
+        unique_together = ('resource', 'organization')
+
+    @property
+    def has_schedule(self):
+        return self.schedule_intervals.count() > 0
+
+    def strip_organization_time(self):
+        """
+        сокращает выделенное время ресурса для организации до окончания времени,
+        выделенного каким-либо менеджером данной орг-ии
+        """
+        now = datetime.datetime.now(get_default_timezone())
+        self.schedule_extended_date = now
+        for i in Interval.objects.at_date(now).filter(resource=self.resource, organization=self.organization):
+            i.end = now
+            i.save()
+
+    def extend_schedule(self, end):
+        if self.schedule_extended_date and self.schedule_extended_date >= end:
+            return
+        if self.apply_schedule(self.schedule_extended_date, end):
+            self.schedule_extended_date = end
+            self.save()
+
+    def apply_schedule(self, start, end, schedule_intervals=None, save_as_default=False):
+        """
+        создает новые интервалы доступности ресурса для организации
+        :param schedule_intervals: список интервалов графика (если None, берет имеющиеся)
+        :param save_as_default: сохранять переданные schedule_intervals в качестве постоянных или нет
+        :param start: дата и время начала
+        :param end: дата и время окончания
+        """
+        if not (schedule_intervals or self.schedule_intervals.count()):
+            return False
+        if not start or not end or start >= end:
+            return False
+
+        used_scedule_intervals = schedule_intervals if schedule_intervals is not None else self.schedule_intervals.all()
+
+        # очищаем имеющиеся интервалы работы для выбранного отрезка времени
+        work_interval = Interval(resource=self.resource, organization=self.organization,
+                                 kind=Interval.Kind_OrganizationReserved, start=start, end=end)
+        work_interval.clear_existing()
+
+        intervals = []      # создаваемые интервалы
+        schedule_intervals_map = {}     # раскладываем интервалы графика в словарь {день_недели: интервал графика}
+
+        for si in used_scedule_intervals:
+            if si.start.tzinfo is None:                  # добавляем временную зону
+                si.start = si.start.replace(tzinfo=UTC())
+            if si.end.tzinfo is None:
+                si.end = si.end.replace(tzinfo=UTC())
+
+            schedule_intervals_map.setdefault(si.day_of_week, [])
+            schedule_intervals_map[si.day_of_week].append(si)
+
+        for i in range(max((end - start).days, 1)):      # перебираем дни с первого по последний, начиная с 0
+            apply_date = (start + datetime.timedelta(days=i)).date()
+            week_day = (apply_date.weekday() + 1) % 7    # в нашем случае первый день недели - ВС, а не ПН
+            if week_day not in schedule_intervals_map:
+                continue
+            for si in schedule_intervals_map[week_day]:
+                apply_start = datetime.datetime.combine(apply_date, si.start)
+                apply_end = datetime.datetime.combine(apply_date, si.end)
+                # если нач. дата больше конечной (такое бывает, например,
+                # когда местное время старта меньше UTC смещения и преобразуется в UTC)
+                if apply_start > apply_end:
+                    apply_start -= datetime.timedelta(days=1)
+                interval = Interval(start=apply_start, end=apply_end, kind=Interval.Kind_OrganizationReserved,
+                                    resource=self.resource, organization=self.organization)
+                # включаем интервал в список созданных интервалов, объединяя перекрывающиеся
+                interval.join_existing(intervals)
+                intervals.append(interval)
+
+        for i in intervals:                        # убираем короткие интервалы
+            if i.end - i.start < Interval.JOIN_GAP:
+                intervals.remove(i)
+
+        intervals.sort(key=lambda d: d.start)      # сортируем получившиеся интервалы по возрастанию
+        if len(intervals):                         # склеиваем первый (и последний) с имеющимися
+            intervals[0].join_existing()
+            if len(intervals) > 1:
+                intervals[-1].join_existing()
+        Interval.objects.bulk_create(intervals)    # записываем получившиеся интервалы
+
+        # сохраняем расписание
+        if save_as_default and schedule_intervals is not None:
+            for si in schedule_intervals:
+                si.membership = self
+            self.schedule_intervals.all().delete()
+            ScheduleInterval.objects.bulk_create(schedule_intervals)
+        return True
+
+
+class ScheduleInterval(models.Model):
+    membership = models.ForeignKey(ResourceMembership, related_name='schedule_intervals', on_delete=models.CASCADE)
     day_of_week = models.PositiveSmallIntegerField()
     start = models.TimeField()
     end = models.TimeField()
 
     class Meta:
-        ordering = ('resource', 'day_of_week')
+        ordering = ('membership', 'day_of_week')
 
 
 class ApiKey(models.Model):
