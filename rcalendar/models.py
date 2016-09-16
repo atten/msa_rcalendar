@@ -262,7 +262,22 @@ class Interval(models.Model):
 
         if join_existing:
             self.join_existing()
+
+        created = self.pk is None
         super().save(*args, **kwargs)
+
+        EventDispatcher.push_event_to_responce(kind='create-interval' if created else 'change-interval',
+                                               interval_kind=self.get_kind_display(),
+                                               organization=self.organization.msa_id if self.organization else None,
+                                               resource=self.resource.msa_id if self.resource else None,
+                                               manager=self.manager.msa_id if self.manager else None,
+                                               comment=self.comment,
+                                               start=self.start,
+                                               end=self.end)
+
+    # def delete(self, **kwargs):
+    #     # EventDispatcher.push_event_to_responce
+    #     return super().delete(**kwargs)
 
 
 class ResourceMembership(models.Model):

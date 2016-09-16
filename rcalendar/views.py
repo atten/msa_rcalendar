@@ -253,6 +253,7 @@ class ResourceViewSet(FilterByAppViewSet,
         return Response(data)
 
     @detail_route(['POST'])
+    @append_events_data()
     def clear_unavailable_interval(self, request, msa_id):
         start, end = parse_args(parse_datetime, request.data, False, 'start', 'end')
         resource = self.get_object()
@@ -270,12 +271,21 @@ class IntervalViewSet(mixins.CreateModelMixin,
     serializer_class = serializers.IntervalSerializer
     permission_classes = (permissions.HasValidApiKey, permissions.IntervalPermission,)
 
+    @append_events_data()
     def create(self, request, *args, **kwargs):
         kind = request.data.get('kind')
         if isinstance(kind, str):
             kind = Interval.kind_from_str(kind)
             request.data['kind'] = kind
         return super().create(request, *args, **kwargs)
+
+    @append_events_data()
+    def update(self, request, *args, **kwargs):
+        super().update(request, *args, **kwargs)
+
+    # @append_events_data()
+    # def destroy(self, request, *args, **kwargs):
+    #     super().destroy(request, *args, **kwargs)
 
     @list_route(['DELETE'])
     def delete_many(self, request):
