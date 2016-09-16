@@ -124,6 +124,17 @@ class Interval(models.Model):
             return self.manager.msa_id if msa_id_only and self.manager else self.manager
         return None
 
+    def as_schedule_intervals(self):
+        """разбивает интервал на отрезки по дням недели"""
+        ret = []
+        for i in range((self.end.date() - self.start.date()).days + 1):  # перебираем дни с первого по последний, начиная с 0
+            dt = (self.start + datetime.timedelta(days=i)).date()
+            start_time = self.start.timetz() if i == 0 else datetime.time(tzinfo=self.start.tzinfo)
+            end_time = self.end.timetz() if dt == self.end.date() else datetime.time(23, 59, 59, tzinfo=self.start.tzinfo)
+            week_day = (dt.weekday() + 1) % 7                  # в нашем случае первый день недели - ВС, а не ПН
+            ret.append(ScheduleInterval(day_of_week=week_day, start=start_time, end=end_time))
+        return ret
+
     def join_existing(self, existing=None, timedelta='default'):
         """
         склеивает с имеющимися интервалами с совпадающими параметрами
@@ -239,6 +250,10 @@ class Interval(models.Model):
                 raise exceptions.FormError('', _('This period is reserved for another manager.'))
 
         elif self.kind == Interval.Kind_OrganizationReserved:
+            for membership in self.resource.organization_memberships.exclude(organization=self.organization):
+                if membership.schedule_intervals.has_intersection(self):
+                    raise exceptions.FormError('', _('This period falls within another organization\'s schedule.'))
+
             if Interval.objects.between(self.start, self.end) \
                                .filter(kind=Interval.Kind_OrganizationReserved,
                                        resource=self.resource) \
@@ -312,7 +327,7 @@ class ResourceMembership(models.Model):
             schedule_intervals_map.setdefault(si.day_of_week, [])
             schedule_intervals_map[si.day_of_week].append(si)
 
-        for i in range(max((end - start).days, 1)):      # перебираем дни с первого по последний, начиная с 0
+        for i in range((end.date() - start.date()).days + 1):      # перебираем дни с первого по последний, начиная с 0
             apply_date = (start + datetime.timedelta(days=i)).date()
             week_day = (apply_date.weekday() + 1) % 7    # в нашем случае первый день недели - ВС, а не ПН
             if week_day not in schedule_intervals_map:
@@ -350,11 +365,37 @@ class ResourceMembership(models.Model):
         return True
 
 
+class ScheduleIntervalManager(models.QuerySet):
+    def has_intersection(self, interval):
+        splitted_schedule_intervals = interval.as_schedule_intervals()
+        days_of_week = set([i.day_of_week for i in splitted_schedule_intervals])
+
+        for i in self.filter(day_of_week__in=days_of_week):
+            for j in splitted_schedule_intervals:
+                if i.has_intersection(j):
+                    return True
+        return False
+
+
 class ScheduleInterval(models.Model):
     membership = models.ForeignKey(ResourceMembership, related_name='schedule_intervals', on_delete=models.CASCADE)
     day_of_week = models.PositiveSmallIntegerField()
     start = models.TimeField()
     end = models.TimeField()
+
+    objects = ScheduleIntervalManager.as_manager()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.start.tzinfo is None:
+            self.start = self.start.replace(tzinfo=UTC())
+        if self.end.tzinfo is None:
+            self.end = self.end.replace(tzinfo=UTC())
+
+    def has_intersection(self, other):
+        return self.day_of_week == other.day_of_week and (
+            other.start < self.start < other.end or self.start < other.start < self.end
+        )
 
     class Meta:
         ordering = ('membership', 'day_of_week')

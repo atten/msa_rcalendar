@@ -66,13 +66,13 @@ class OrganizationViewSet(FilterByAppViewSet,
         intervals = Interval.objects.between(start, end).filter(Q(organization=org) |                           # интервалы, относящиеся к текущей организации
                                                                 Q(kind=Interval.Kind_OrganizationReserved) |    # или к организациям вообще
                                                                 Q(kind=Interval.Kind_Unavailable))
-        memberships = org.resource_members
-
         if resource_msa_id:
             intervals = intervals.filter(resource__msa_id=resource_msa_id)
-            memberships = memberships.filter(resource__msa_id=resource_msa_id)
+            memberships = ResourceMembership.objects.filter(resource__msa_id=resource_msa_id)
         else:
-            intervals = intervals.filter(resource_id__in=org.get_resource_ids())
+            resource_ids = org.get_resource_ids()
+            intervals = intervals.filter(resource_id__in=resource_ids)
+            memberships = ResourceMembership.objects.filter(resource_id__in=resource_ids)
 
         for membership in memberships.prefetch_related('schedule_intervals'):
             membership.extend_schedule(end)  # продлеваем расписание до конечной просматриваемой даты
