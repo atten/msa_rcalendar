@@ -225,7 +225,7 @@ class Interval(models.Model):
             raise exceptions.FormError('end', _('End date must be greater than start date.'))
 
         # не указывать организацию можно только для интервалов недоступности
-        if not self.organization_id and self.kind not in (self.Kind_Unavailable, self.Kind_ScheduledUnavailable):
+        if not self.organization_id and self.kind != self.Kind_Unavailable:
             raise exceptions.FormError('organization', _('You must specify organization for this interval.'))
 
         # указанный менеджер должен состоять в указанной организации
