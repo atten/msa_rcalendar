@@ -277,15 +277,27 @@ class IntervalViewSet(mixins.CreateModelMixin,
         if isinstance(kind, str):
             kind = Interval.kind_from_str(kind)
             request.data['kind'] = kind
-        return super().create(request, *args, **kwargs)
+        ret = super().create(request, *args, **kwargs)
+
+        msg = _('Specified interval has been %s.')
+        detail_msg = {
+            Interval.Kind_OrganizationReserved: msg % _('reserved for organization'),
+            Interval.Kind_ManagerReserved: msg % _('reserved'),
+            Interval.Kind_Unavailable: msg % _('marked as unavailable for working'),
+        }
+        if kind in detail_msg:
+            ret.data = {'detail': detail_msg[kind]}
+        return ret
 
     @append_events_data()
     def update(self, request, *args, **kwargs):
-        super().update(request, *args, **kwargs)
+        ret = super().update(request, *args, **kwargs)
+        ret.data = {'detail': _('Interval has been updated.')}
+        return ret
 
     # @append_events_data()
     # def destroy(self, request, *args, **kwargs):
-    #     super().destroy(request, *args, **kwargs)
+    #     return super().destroy(request, *args, **kwargs)
 
     @list_route(['DELETE'])
     def delete_many(self, request):

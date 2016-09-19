@@ -232,6 +232,10 @@ class Interval(models.Model):
         if self.organization_id and self.manager_id and self.organization not in self.manager.organizations.all():
             raise exceptions.FormError('', _('Only managers can reserve time for organization.'))
 
+        # указанный ресурс должен состоять в указанной организации
+        if self.organization_id and self.resource_id and not self.organization.resource_members.filter(resource=self.resource).count():
+            raise exceptions.FormError('', _('Resource is not in specified organization.'))
+
         if self.kind == Interval.Kind_ManagerReserved:
             if not self.manager_id:
                 raise exceptions.FormError('manager', _('You must specify manager for this interval.'))

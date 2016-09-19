@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2016-09-16 10:35+0300\n"
+"POT-Creation-Date: 2016-09-19 14:57+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -42,23 +42,26 @@ msgid "Only managers can reserve time for organization."
 msgstr "Только менеджеры могут резервировать время для организации."
 
 #: rcalendar/models.py:237
+msgid "Resource is not in specified organization."
+msgstr "Ресурс не принадлежит указанной организации."
+
+#: rcalendar/models.py:241
 msgid "You must specify manager for this interval."
 msgstr "Нужно указать менеджера для данного интервала."
 
-#: rcalendar/models.py:244
+#: rcalendar/models.py:248
 msgid "This period is't fall within organization time."
 msgstr "Выбранный период не входит целиком в выделенное время для организации."
 
-#: rcalendar/models.py:250
+#: rcalendar/models.py:254
 msgid "This period is reserved for another manager."
 msgstr "Выбранный период входит во время, выделенное для другого менеджера."
 
-#: rcalendar/models.py:255
-#| msgid "This period falls within another organization."
+#: rcalendar/models.py:259
 msgid "This period falls within another organization's schedule."
 msgstr "Выбранный период входит в расписание другой организации."
 
-#: rcalendar/models.py:261
+#: rcalendar/models.py:265
 msgid "This period falls within another organization."
 msgstr "Выбранный период входит во время, выделенное для другой организации."
 
@@ -109,10 +112,30 @@ msgstr "начиная с текущего дня"
 msgid "Schedule wasn't changed."
 msgstr "График не изменён."
 
-#: rcalendar/views.py:261
+#: rcalendar/views.py:262
 msgid "Specified interval has been marked as available for working."
 msgstr "Указанный интервал отмечен доступным для работы."
 
-#: rcalendar/views.py:262
+#: rcalendar/views.py:263
 msgid "Specified interval already marked as available for working."
 msgstr "Указанный интервал уже является доступным для работы."
+
+#: rcalendar/views.py:282
+msgid "Specified interval has been %s."
+msgstr "Указанный интервал %s."
+
+#: rcalendar/views.py:284
+msgid "reserved for organization"
+msgstr "зарезервирован для организации"
+
+#: rcalendar/views.py:285
+msgid "reserved"
+msgstr "зарезервирован"
+
+#: rcalendar/views.py:286
+msgid "marked as unavailable for working"
+msgstr "отмечен как недоступный для работы"
+
+#: rcalendar/views.py:295
+msgid "Interval has been updated."
+msgstr "Интервал обновлён."
