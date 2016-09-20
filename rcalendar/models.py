@@ -44,7 +44,7 @@ class Resource(ApiModelMixIn):
 
     def clear_unvailable_interval(self, start, end):
         i = Interval(resource=self, start=start, end=end, kind=Interval.Kind_Unavailable)
-        return i.clear_existing()
+        return i.substract_from_existing()
 
     def __str__(self):
         return '%s: %d' % (self._meta.object_name, self.msa_id)
@@ -69,17 +69,24 @@ class IntervalQuerySet(QuerySet):
         return self.filter(Q(start__lt=dt, end__gt=dt))
 
     def similar(self, interval):
-        q = Q(resource=interval.resource, kind=interval.kind, organization=interval.organization)
+        q = Q(resource=interval.resource, kind=interval.kind, organization=interval.organization, manager=interval.manager)
 
         # если интервал для организации, разных менеджеров не учитываем
-        if interval.kind != Interval.Kind_OrganizationReserved:
-            q &= Q(manager=interval.manager)
+        # if interval.kind != Interval.Kind_OrganizationReserved:
+        #     q &= Q()
 
         qs = self.filter(q)
 
         if interval.id:
             qs = qs.exclude(id=interval.id)
         return qs
+
+    def is_continuous(self):
+        existing = []
+        for interval in self:
+            interval.join_with_existing(existing, timedelta=0)
+            existing.append(interval)
+        return len(existing) == 1
 
 
 class Interval(models.Model):
@@ -107,7 +114,7 @@ class Interval(models.Model):
     objects = IntervalQuerySet.as_manager()
 
     class Meta:
-        ordering = ('kind',)
+        ordering = ('kind', 'manager')
 
     @classmethod
     def kind_from_str(cls, kind_str):
@@ -135,14 +142,32 @@ class Interval(models.Model):
             ret.append(ScheduleInterval(day_of_week=week_day, start=start_time, end=end_time))
         return ret
 
-    def join_existing(self, existing=None, timedelta='default'):
+    # def trim(self):
+    #     """обрезает границы интервала на основе имеющихся интервалов с тем же kind"""
+    #     if self.kind == Interval.Kind_OrganizationReserved:
+    #         others = Interval.objects.filter(resource=self.resource, organization=self.organization, kind=self.kind)\
+    #                                  .between(self.start, self.end)
+    #         for other in others:
+    #             if self.start >= other.start and self.end <= other.end:  # новый внутри
+    #                 raise exceptions.FormError('', _('Interval is already reserved for organization.'))
+    #             if self.start <= other.start and self.end >= other.end:  # новый снаружи
+    #                 self.end = other.start
+    #             if other.start <= self.start < other.end:  # пересекаются
+    #                 self.start = other.end
+    #             if other.start < self.end <= other.end:  # пересекаются
+    #                 self.end = other.start
+
+    def join_with_existing(self, existing=None, timedelta='default'):
         """
         склеивает с имеющимися интервалами с совпадающими параметрами
         :param timedelta: временной промежуток для склеивания
-        :param existing: если не указан, интервалы берутся из базы, склеиваемые удаляются. Если указан список интервалов, то склеиваемый добавляется к ним
+        :param existing: если не указан, интервалы берутся из базы, склеиваемые удаляются.
+        Если указан список интервалов, то склеиваемый добавляется к ним
         """
         if timedelta == 'default':
             timedelta = Interval.JOIN_GAP
+        elif not timedelta:
+            timedelta = datetime.timedelta()
         qs = existing if existing is not None else Interval.objects.similar(self).between(self.start - timedelta, self.end + timedelta)
         do_save = isinstance(qs, models.QuerySet)
         do_append = isinstance(existing, list)
@@ -171,7 +196,7 @@ class Interval(models.Model):
 
         return changed
 
-    def clear_existing(self, existing=None):
+    def substract_from_existing(self, existing=None):
         """
         исключает интервал из имеющихся интервалов с совпадающими параметрами, удаляя их или обрезая
         :param existing: список рассматриваемых интервалов, любо None (в этом случае берется qs похожих из базы)
@@ -204,13 +229,13 @@ class Interval(models.Model):
                 changed = True
                 interval.end = self.start
                 if do_save:
-                    interval.save(join_existing=False)
+                    interval.save(join_existing=False, trim=False)
 
             elif interval.start < self.end < interval.end:                     # пересекаются
                 changed = True
                 interval.start = self.end
                 if do_save:
-                    interval.save(join_existing=False)
+                    interval.save(join_existing=False, trim=False)
 
             elif interval.start >= self.start and interval.end <= self.end:    # внутри
                 changed = True
@@ -220,7 +245,7 @@ class Interval(models.Model):
                     existing.remove(interval)
         return changed
 
-    def save(self, join_existing=True, *args, **kwargs):
+    def save(self, join_existing=True, trim=True, *args, **kwargs):
         if self.start >= self.end:
             raise exceptions.FormError('end', _('End date must be greater than start date.'))
 
@@ -242,9 +267,9 @@ class Interval(models.Model):
 
             if not Interval.objects.filter(kind=Interval.Kind_OrganizationReserved,
                                            organization=self.organization,
-                                           resource=self.resource,
-                                           start__lte=self.start,
-                                           end__gte=self.end).exists():
+                                           resource=self.resource) \
+                                   .between(self.start, self.end)\
+                                   .is_continuous():
                 raise exceptions.FormError('', _('This period is\'t fall within organization time.'))
 
             if Interval.objects.between(self.start, self.end) \
@@ -265,7 +290,10 @@ class Interval(models.Model):
                 raise exceptions.FormError('', _('This period falls within another organization.'))
 
         if join_existing:
-            self.join_existing()
+            self.join_with_existing()
+        #
+        # if trim:
+        #     self.trim()
 
         created = self.pk is None
         super().save(*args, **kwargs)
@@ -332,7 +360,7 @@ class ResourceMembership(models.Model):
         # очищаем имеющиеся интервалы работы для выбранного отрезка времени
         work_interval = Interval(resource=self.resource, organization=self.organization,
                                  kind=Interval.Kind_OrganizationReserved, start=start, end=end)
-        work_interval.clear_existing()
+        work_interval.substract_from_existing()
 
         intervals = []      # создаваемые интервалы
         schedule_intervals_map = {}     # раскладываем интервалы графика в словарь {день_недели: интервал графика}
@@ -361,7 +389,7 @@ class ResourceMembership(models.Model):
                 interval = Interval(start=apply_start, end=apply_end, kind=Interval.Kind_OrganizationReserved,
                                     resource=self.resource, organization=self.organization)
                 # включаем интервал в список созданных интервалов, объединяя перекрывающиеся
-                interval.join_existing(intervals)
+                interval.join_with_existing(intervals)
                 intervals.append(interval)
 
         for i in intervals:                        # убираем короткие интервалы
@@ -370,9 +398,9 @@ class ResourceMembership(models.Model):
 
         intervals.sort(key=lambda d: d.start)      # сортируем получившиеся интервалы по возрастанию
         if len(intervals):                         # склеиваем первый (и последний) с имеющимися
-            intervals[0].join_existing()
+            intervals[0].join_with_existing()
             if len(intervals) > 1:
-                intervals[-1].join_existing()
+                intervals[-1].join_with_existing()
         Interval.objects.bulk_create(intervals)    # записываем получившиеся интервалы
 
         # сохраняем расписание
