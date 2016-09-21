@@ -116,6 +116,9 @@ class Interval(models.Model):
     class Meta:
         ordering = ('kind', 'manager')
 
+    def __str__(self):
+        return '%s interval [%s - %s]' % (self.get_kind_display(), self.start, self.end)
+
     @classmethod
     def kind_from_str(cls, kind_str):
         for choice in cls.KIND_CHOICES:
@@ -182,8 +185,13 @@ class Interval(models.Model):
                 changed = True
         elif do_append:
             for interval in existing:
-                if interval.start >= self.start and interval.end <= self.end:   # имеющийся внутри
+                if interval.start >= self.start and interval.end <= self.end:   # имеющийся - внутри
                     existing.remove(interval)
+                    changed = True
+                elif interval.start < self.start and interval.end > self.end:  # имеющийся - снаружи
+                    existing.remove(interval)
+                    self.start = interval.start
+                    self.end = interval.end
                     changed = True
                 elif interval.start < self.start < interval.end or (self.start > interval.end and self.start - interval.end < timedelta):  # пересекаются или соприкасаются
                     self.start = interval.start
