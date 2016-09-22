@@ -57,6 +57,14 @@ msgstr "Выбранный период не входит целиком в вы
 msgid "This period is reserved for another manager."
 msgstr "Выбранный период входит во время, выделенное для другого менеджера."
 
+#: rcalendar/models.py:287
+msgid "This period is already reserved."
+msgstr "Выбранный период уже зарезервирован."
+
+#: rcalendar/models.py:295
+msgid "This period is already reserved for organization."
+msgstr "Выбранный период уже зарезервирован для организации."
+
 #: rcalendar/models.py:259
 msgid "This period falls within another organization's schedule."
 msgstr "Выбранный период входит в расписание другой организации."

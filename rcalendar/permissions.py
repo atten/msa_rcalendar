@@ -24,13 +24,11 @@ class IntervalPermission(permissions.BasePermission):
             manager = manager_qs[0]
             if obj.manager == manager:
                 return True
-            if obj.organization in manager.organizations.all():
-                return True
 
         resource_qs = Resource.objects.filter(msa_id=author_msa_id, app=request.app)       # maybe author is resource?
         if resource_qs.exists():
             resource = resource_qs[0]
-            if obj.resource == resource and not obj.manager_id:
+            if obj.resource == resource and obj.kind == obj.Kind_Unavailable:
                 return True
 
         return False

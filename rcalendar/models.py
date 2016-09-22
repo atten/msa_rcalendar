@@ -81,12 +81,12 @@ class IntervalQuerySet(QuerySet):
             qs = qs.exclude(id=interval.id)
         return qs
 
-    def is_continuous(self):
+    def is_continuous(self, start, end):
         existing = []
         for interval in self:
             interval.join_with_existing(existing, timedelta=0)
             existing.append(interval)
-        return len(existing) == 1
+        return len(existing) == 1 and existing[0].start <= start and existing[0].end >= end
 
 
 class Interval(models.Model):
@@ -269,33 +269,34 @@ class Interval(models.Model):
         if self.organization_id and self.resource_id and not self.organization.resource_members.filter(resource=self.resource).count():
             raise exceptions.FormError('', _('Resource is not in specified organization.'))
 
+        qs = Interval.objects.between(self.start, self.end).filter(resource=self.resource)
+
         if self.kind == Interval.Kind_ManagerReserved:
             if not self.manager_id:
                 raise exceptions.FormError('manager', _('You must specify manager for this interval.'))
 
-            if not Interval.objects.filter(kind=Interval.Kind_OrganizationReserved,
-                                           organization=self.organization,
-                                           resource=self.resource) \
-                                   .between(self.start, self.end)\
-                                   .is_continuous():
+            if not qs.filter(kind=Interval.Kind_OrganizationReserved, organization=self.organization)\
+                     .is_continuous(self.start, self.end):
                 raise exceptions.FormError('', _('This period is\'t fall within organization time.'))
 
-            if Interval.objects.between(self.start, self.end) \
-                               .filter(kind=Interval.Kind_ManagerReserved,
-                                       resource=self.resource) \
-                               .exclude(manager=self.manager):
+            if qs.filter(kind=Interval.Kind_ManagerReserved).exclude(manager=self.manager):
                 raise exceptions.FormError('', _('This period is reserved for another manager.'))
 
+            if qs.filter(kind=Interval.Kind_ManagerReserved, organization=self.organization, manager=self.manager)\
+                 .is_continuous(self.start, self.end):
+                raise exceptions.FormError('', _('This period is already reserved.'))
+
         elif self.kind == Interval.Kind_OrganizationReserved:
+            if qs.filter(kind=Interval.Kind_OrganizationReserved, organization=self.organization)\
+                 .is_continuous(self.start, self.end):
+                raise exceptions.FormError('', _('This period is already reserved for organization.'))
+
+            if qs.filter(kind=Interval.Kind_OrganizationReserved).exclude(organization=self.organization):
+                raise exceptions.FormError('', _('This period falls within another organization.'))
+
             for membership in self.resource.organization_memberships.exclude(organization=self.organization):
                 if membership.schedule_intervals.has_intersection(self):
                     raise exceptions.FormError('', _('This period falls within another organization\'s schedule.'))
-
-            if Interval.objects.between(self.start, self.end) \
-                               .filter(kind=Interval.Kind_OrganizationReserved,
-                                       resource=self.resource) \
-                               .exclude(organization=self.organization):
-                raise exceptions.FormError('', _('This period falls within another organization.'))
 
         if join_existing:
             self.join_with_existing()
