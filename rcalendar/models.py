@@ -209,7 +209,7 @@ class Interval(models.Model):
         исключает интервал из имеющихся интервалов с совпадающими параметрами, удаляя их или обрезая
         :param existing: список рассматриваемых интервалов, любо None (в этом случае берется qs похожих из базы)
         """
-        qs = existing or Interval.objects.similar(self).between(self.start, self.end)
+        qs = existing if existing is not None else Interval.objects.similar(self).between(self.start, self.end)
         do_save = isinstance(qs, models.QuerySet)
         do_append = isinstance(existing, list)
         changed = False
@@ -270,6 +270,8 @@ class Interval(models.Model):
             raise exceptions.FormError('', _('Resource is not in specified organization.'))
 
         qs = Interval.objects.between(self.start, self.end).filter(resource=self.resource)
+        if self.pk:
+            qs = qs.exclude(id=self.id)
 
         if self.kind == Interval.Kind_ManagerReserved:
             if not self.manager_id:
@@ -367,9 +369,12 @@ class ResourceMembership(models.Model):
         used_scedule_intervals = schedule_intervals if schedule_intervals is not None else self.schedule_intervals.all()
 
         # очищаем имеющиеся интервалы работы для выбранного отрезка времени
-        work_interval = Interval(resource=self.resource, organization=self.organization,
-                                 kind=Interval.Kind_OrganizationReserved, start=start, end=end)
-        work_interval.substract_from_existing()
+        work_interval = Interval(start=start, end=end)
+        qs = Interval.objects.between(start, end)\
+                             .filter(resource=self.resource,
+                                     organization=self.organization,
+                                     kind=Interval.Kind_OrganizationReserved)
+        work_interval.substract_from_existing(qs)
 
         intervals = []      # создаваемые интервалы
         schedule_intervals_map = {}     # раскладываем интервалы графика в словарь {день_недели: интервал графика}
