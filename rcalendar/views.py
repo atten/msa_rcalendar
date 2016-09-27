@@ -11,12 +11,14 @@ from django.db.models import Q
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import get_default_timezone
 from django.utils.translation import ugettext_lazy as _
+from django.utils.formats import localize
 from django.shortcuts import get_object_or_404
 
 from . import serializers, permissions, exceptions
 from .models import Organization, Manager, Resource, Interval, ScheduleInterval, ResourceMembership
 from .utils import parse_args
 from .decorators import append_events_data
+from .middleware import EventDispatchMiddleware as EventDispatcher
 
 
 class SafeModelSerializerMixIn(object):
@@ -55,6 +57,7 @@ class OrganizationViewSet(FilterByAppViewSet,
                           viewsets.GenericViewSet):
     queryset = Organization.objects.all()
     serializer_class = serializers.OrganizationSerializer
+    permission_classes = (permissions.HasValidApiKey,)
     lookup_field = 'msa_id'
 
     @detail_route()
@@ -105,7 +108,7 @@ class ManagerViewSet(FilterByAppViewSet,
                      mixins.DestroyModelMixin,
                      viewsets.GenericViewSet):
     queryset = Manager.objects.all()
-    # serializer_class = serializers.ManagerSerializer
+    permission_classes = (permissions.HasValidApiKey,)
     lookup_field = 'msa_id'
 
     def destroy(self, request, *args, **kwargs):
@@ -143,7 +146,7 @@ class ResourceViewSet(FilterByAppViewSet,
                       mixins.DestroyModelMixin,
                       viewsets.GenericViewSet):
     queryset = Resource.objects.all()
-    # serializer_class = serializers.ResourceSerializer
+    permission_classes = (permissions.HasValidApiKey,)
     lookup_field = 'msa_id'
 
     @list_route(['POST'])
@@ -189,6 +192,7 @@ class ResourceViewSet(FilterByAppViewSet,
         return Response()
 
     @detail_route(['POST'])
+    @append_events_data()
     def apply_schedule(self, request, msa_id):
         organization_msa_id = request.data.get('organization') or request.GET.get('organization')
         start, end = parse_args(parse_datetime, request.data, True, 'start', 'end')
@@ -217,11 +221,11 @@ class ResourceViewSet(FilterByAppViewSet,
             detail_str %= _('created %s')
 
         if start and end:
-            detail_str %= _('from %s to %s') % (start.strftime('%x'), end.strftime('%x'))
+            detail_str %= _('from %s to %s') % (localize(start), localize(end))
         elif start:
-            detail_str %= _('starting %s') % start.strftime('%x')
+            detail_str %= _('starting %s') % localize(start)
         elif end:
-            detail_str %= _('to %s') % end.strftime('%x')
+            detail_str %= _('to %s') % localize(end)
         else:
             detail_str %= _('from now on')
 
@@ -235,6 +239,13 @@ class ResourceViewSet(FilterByAppViewSet,
             if permanent or not membership.schedule_extended_date or membership.schedule_extended_date < end:
                 membership.schedule_extended_date = end
                 membership.save()
+            manager_id = request.GET.get('author_id')
+            EventDispatcher.push_event_to_responce(kind='apply-schedule',
+                                                   manager=manager_id,
+                                                   resource=msa_id,
+                                                   organization=organization_msa_id,
+                                                   permanent=permanent,
+                                                   duration=[start, end])
         else:
             detail_str = _('Schedule wasn\'t changed.')
 
@@ -295,14 +306,11 @@ class IntervalViewSet(mixins.CreateModelMixin,
         ret.data = {'detail': _('Interval has been updated.')}
         return ret
 
-    # @append_events_data()
-    # def destroy(self, request, *args, **kwargs):
-    #     return super().destroy(request, *args, **kwargs)
-
     @list_route(['DELETE'])
+    @append_events_data()
     def delete_many(self, request):
         ids = request.data.get('ids')
         for id in ids:
             self.kwargs = {'pk': id}
             self.destroy(request)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response()

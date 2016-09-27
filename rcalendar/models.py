@@ -17,6 +17,7 @@ class ApiModelMixIn(models.Model):
 
     class Meta:
         abstract = True
+        unique_together = ('app', 'msa_id')
 
 
 class Organization(ApiModelMixIn):
@@ -29,6 +30,9 @@ class Organization(ApiModelMixIn):
 
 class Manager(ApiModelMixIn):
     organizations = models.ManyToManyField(Organization, related_name="managers")
+
+    def organizations_for_resource(self, resource):
+        return self.organizations.filter(resource_members__resource=resource)
 
 
 class Resource(ApiModelMixIn):
@@ -44,7 +48,18 @@ class Resource(ApiModelMixIn):
 
     def clear_unvailable_interval(self, start, end):
         i = Interval(resource=self, start=start, end=end, kind=Interval.Kind_Unavailable)
-        return i.substract_from_existing()
+        changed = i.substract_from_existing()
+        if changed:
+            affected_managers = Interval.objects.filter(resource=self).between(i.start, i.end).managers()
+            for m in affected_managers:
+                orgs = m.organizations_for_resource(self)
+                EventDispatcher.push_event_to_responce(kind='clear-unavailable-interval',
+                                                       resource=self.msa_id,
+                                                       manager=m.msa_id,
+                                                       organization=orgs[0].msa_id if orgs else None,
+                                                       duration=[start, end],
+                                                       timedelta=end - start)
+        return changed
 
     def __str__(self):
         return '%s: %d' % (self._meta.object_name, self.msa_id)
@@ -87,6 +102,12 @@ class IntervalQuerySet(QuerySet):
             interval.join_with_existing(existing, timedelta=0)
             existing.append(interval)
         return len(existing) == 1 and existing[0].start <= start and existing[0].end >= end
+
+    def managers(self):
+        q = Q(manager__isnull=False) & (Q(kind=Interval.Kind_ManagerReserved) |
+                                        Q(kind=Interval.Kind_OrganizationReserved))
+        manager_ids = self.filter(q).order_by('manager').distinct('manager').values_list('manager', flat=True)
+        return Manager.objects.filter(id__in=manager_ids)
 
 
 class Interval(models.Model):
@@ -220,7 +241,7 @@ class Interval(models.Model):
                 end_old = interval.end
                 interval.end = self.start
                 if do_save:
-                    interval.save(join_existing=False)
+                    interval.save(join_existing=False, trim=False, events=False)
                 i2 = Interval(start=self.end,
                               end=end_old,
                               kind=interval.kind,
@@ -229,7 +250,7 @@ class Interval(models.Model):
                               organization=interval.manager,
                               comment=interval.comment)
                 if do_save:
-                    i2.save(join_existing=False)
+                    i2.save(join_existing=False, trim=False, events=False)
                 if do_append:
                     existing.append(i2)
 
@@ -237,23 +258,23 @@ class Interval(models.Model):
                 changed = True
                 interval.end = self.start
                 if do_save:
-                    interval.save(join_existing=False, trim=False)
+                    interval.save(join_existing=False, trim=False, events=False)
 
             elif interval.start < self.end < interval.end:                     # пересекаются
                 changed = True
                 interval.start = self.end
                 if do_save:
-                    interval.save(join_existing=False, trim=False)
+                    interval.save(join_existing=False, trim=False, events=False)
 
             elif interval.start >= self.start and interval.end <= self.end:    # внутри
                 changed = True
                 if do_save:
-                    interval.delete()
+                    interval.delete(events=False)
                 if do_append:
                     existing.remove(interval)
         return changed
 
-    def save(self, join_existing=True, trim=True, *args, **kwargs):
+    def save(self, join_existing=True, trim=True, events=True, *args, **kwargs):
         if self.start >= self.end:
             raise exceptions.FormError('end', _('End date must be greater than start date.'))
 
@@ -300,27 +321,59 @@ class Interval(models.Model):
                 if membership.schedule_intervals.has_intersection(self):
                     raise exceptions.FormError('', _('This period falls within another organization\'s schedule.'))
 
+        joined = False
         if join_existing:
-            self.join_with_existing()
+            joined = self.join_with_existing()
         #
         # if trim:
         #     self.trim()
 
-        created = self.pk is None
+        # created = self.pk is None and not joined
         super().save(*args, **kwargs)
 
-        EventDispatcher.push_event_to_responce(kind='create-interval' if created else 'change-interval',
-                                               interval_kind=self.get_kind_display(),
-                                               organization=self.organization.msa_id if self.organization else None,
-                                               resource=self.resource.msa_id if self.resource else None,
-                                               manager=self.manager.msa_id if self.manager else None,
-                                               comment=self.comment,
-                                               start=self.start,
-                                               end=self.end)
+        if events:
+            EventDispatcher.push_event_to_responce(kind='create-interval', **self.get_event_context())
 
-    # def delete(self, **kwargs):
-    #     # EventDispatcher.push_event_to_responce
-    #     return super().delete(**kwargs)
+            if self.kind == Interval.Kind_Unavailable:
+                for m in qs.managers():
+                    orgs = m.organizations_for_resource(self.resource)
+                    EventDispatcher.push_event_to_responce(kind='add-unavailable-interval',
+                                                           comment=self.comment,
+                                                           resource=self.resource.msa_id,
+                                                           manager=m.msa_id,
+                                                           organization=orgs[0].msa_id if orgs else None,
+                                                           duration=[self.start, self.end],
+                                                           timedelta=self.end - self.start)
+
+    def delete(self, events=True, **kwargs):
+        if events:
+            EventDispatcher.push_event_to_responce(kind='delete-interval', **self.get_event_context())
+
+            if self.kind == Interval.Kind_Unavailable:
+                affected_managers = Interval.objects.filter(resource=self.resource).between(self.start, self.end).managers()
+                for m in affected_managers:
+                    orgs = m.organizations_for_resource(self.resource)
+                    EventDispatcher.push_event_to_responce(kind='clear-unavailable-interval',
+                                                           resource=self.resource.msa_id,
+                                                           manager=m.msa_id,
+                                                           organization=orgs[0].msa_id if orgs else None,
+                                                           duration=[self.start, self.end],
+                                                           timedelta=self.end - self.start)
+        return super().delete(**kwargs)
+
+    def get_event_context(self):
+        d = dict(
+            interval_kind=self.get_kind_display(),  # if created else 'change-interval',
+            organization=self.organization.msa_id if self.organization else None,
+            resource=self.resource.msa_id if self.resource else None,
+            manager=self.manager.msa_id if self.manager else None,
+            comment=self.comment,
+            start=self.start,
+            end=self.end,
+            duration=[self.start, self.end],
+            timedelta=self.end-self.start
+        )
+        return d
 
 
 class ResourceMembership(models.Model):
