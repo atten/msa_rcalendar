@@ -2,12 +2,12 @@ import datetime
 
 from rest_framework import viewsets, mixins
 from rest_framework.decorators import list_route, detail_route
-from rest_framework.exceptions import ParseError, ValidationError
+from rest_framework.exceptions import ParseError, ValidationError, NotFound
 from rest_framework.serializers import ModelSerializer
 from rest_framework import status
 from rest_framework.response import Response
 
-from django.db.models import Q
+from django.db.models import Q, ObjectDoesNotExist
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import get_default_timezone
 from django.utils.translation import ugettext_lazy as _
@@ -187,6 +187,8 @@ class ResourceViewSet(FilterByAppViewSet,
                 obj.join_organization(organization, raise_if_joined=True)
             elif request.method == 'DELETE':
                 obj.dismiss_from_organization(organization)
+        except ObjectDoesNotExist:
+            raise NotFound
         except (ValueError, exceptions.FormError) as e:
             raise ValidationError({'detail': str(e)})
         return Response()
