@@ -70,8 +70,8 @@ class OrganizationViewSet(FilterByAppViewSet,
                                                                 Q(kind=Interval.Kind_OrganizationReserved) |    # или к организациям вообще
                                                                 Q(kind=Interval.Kind_Unavailable))
         if resource_msa_id:
-            intervals = intervals.filter(resource__msa_id=resource_msa_id)
-            memberships = ResourceMembership.objects.filter(resource__msa_id=resource_msa_id)
+            intervals = intervals.filter(resource__app=request.app, resource__msa_id=resource_msa_id)
+            memberships = ResourceMembership.objects.filter(resource__app=request.app, resource__msa_id=resource_msa_id)
         else:
             resource_ids = org.get_resource_ids()
             intervals = intervals.filter(resource_id__in=resource_ids)
