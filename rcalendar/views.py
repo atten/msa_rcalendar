@@ -160,7 +160,7 @@ class ResourceViewSet(FilterByAppViewSet,
         count = 0
         joined = 0
         if msa_organization_id:
-            organization = get_object_or_404(Organization, msa_id=msa_organization_id)
+            organization = get_object_or_404(Organization, app=request.app, msa_id=msa_organization_id)
 
         for msa_id in msa_ids:
             obj, created = Resource.objects.get_or_create(app=request.app, msa_id=msa_id)
@@ -176,7 +176,7 @@ class ResourceViewSet(FilterByAppViewSet,
     def membership(self, request, msa_id):
         obj = self.get_object()
         msa_organization_id = request.data.get('organization') or request.GET.get('organization')
-        organization = get_object_or_404(Organization, msa_id=msa_organization_id)
+        organization = get_object_or_404(Organization, app=request.app, msa_id=msa_organization_id)
 
         try:
             if request.method == 'GET':
