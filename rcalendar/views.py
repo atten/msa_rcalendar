@@ -115,7 +115,7 @@ class ManagerViewSet(FilterByAppViewSet,
         if 'organization' in request.GET:           # удалить только из указанной организации
             instance = self.get_object()
             organization_msa_id = request.GET.get('organization')
-            organization = Organization.objects.get(msa_id=organization_msa_id)
+            organization = Organization.objects.get(app=request.app, msa_id=organization_msa_id)
             instance.organizations.remove(organization)
             return Response()
 
@@ -131,7 +131,7 @@ class ManagerViewSet(FilterByAppViewSet,
         if not organization_msa_id:
             raise ParseError({'organization': _('This field is required.')})
 
-        organization = Organization.objects.get(msa_id=organization_msa_id)
+        organization = Organization.objects.get(app=request.app, msa_id=organization_msa_id)
         count = 0
         for msa_id in msa_ids:
             if not organization.managers.filter(msa_id=msa_id).exists():
