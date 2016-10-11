@@ -212,7 +212,9 @@ class ResourceViewSet(FilterByAppViewSet,
             intervals = [ScheduleInterval(**kwargs) for kwargs in intervals_serializer.validated_data]
 
         membership = get_object_or_404(ResourceMembership,
-                                       resource__msa_id=msa_id, organization__msa_id=organization_msa_id)
+                                       resource__msa_id=msa_id,
+                                       resource__app=request.app,
+                                       organization__msa_id=organization_msa_id)
         detail_str = _('Resource schedule for this organization has been %s.')
 
         if do_clear:
