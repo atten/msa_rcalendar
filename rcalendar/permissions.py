@@ -5,7 +5,7 @@ from .models import ApiKey, Manager, Resource
 class HasValidApiKey(permissions.BasePermission):
     def has_permission(self, request, view):
         try:
-            val = request.GET.get('api_key') or request.data.get('api_key')
+            val = request.META.get('HTTP_API_KEY')
             app = ApiKey.objects.get(key=val, is_active=True).app
             request.app = app       # put found app to request
             return True
