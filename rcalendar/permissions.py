@@ -4,6 +4,7 @@ from .models import ApiKey, Manager, Resource
 
 class HasValidApiKey(permissions.BasePermission):
     def has_permission(self, request, view):
+        """Если api-key в заголовках запроса валидный, присваивает app в request и возвращает True, иначе - False."""
         try:
             val = request.META.get('HTTP_API_KEY')
             app = ApiKey.objects.get(key=val, is_active=True).app
@@ -15,6 +16,8 @@ class HasValidApiKey(permissions.BasePermission):
 
 class IntervalPermission(permissions.BasePermission):
     def has_object_permission(self, request, view, obj):
+        """если в GET передан author_id и он совпадает с менеджером или ресурсом данного интервала,
+        возвращает True, иначе - False."""
         author_msa_id = request.GET.get('author_id')
         if not author_msa_id:
             return False

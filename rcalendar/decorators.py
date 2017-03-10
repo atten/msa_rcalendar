@@ -2,6 +2,10 @@ from .middleware import EventDispatchMiddleware
 
 
 def append_events_data():
+    """
+    Декоратор для функций ViewSet'ов, добавляющий в результат Response.data
+    список пользовательских событий, содержащихся в EventDispatchMiddleware.
+    """
     def inner(fn):
         def inner2(view, request, *args, **kwargs):
             ret = fn(view, request, *args, **kwargs)

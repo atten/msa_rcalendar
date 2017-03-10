@@ -5,12 +5,12 @@ from django.utils.timezone import get_default_timezone
 from .exceptions import FormError
 
 
-def datetime_from_date(d):
+def datetime_from_date(d: date) -> datetime:
     """date with 00:00AM local time"""
     return datetime.combine(d, time(tzinfo=get_default_timezone()))
 
 
-def parse_args(func, querydict, alloy_empty, *keys):
+def parse_args(func, querydict, alloy_empty: bool, *keys: str) -> list:
     """парсит аргументы keys из querydict с помощью func (может быть parse_date, parse_time, parse_datetime)"""
     ret = []
     for key in keys:

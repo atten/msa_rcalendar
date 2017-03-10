@@ -2,6 +2,7 @@ from rest_framework.relations import PrimaryKeyRelatedField
 
 
 class MsaIdRelatedField(PrimaryKeyRelatedField):
+    """Сериализатор полей, подставляющий msa_id вместо pk для объекта, для заданного request.app"""
 
     def use_pk_only_optimization(self):
         return False

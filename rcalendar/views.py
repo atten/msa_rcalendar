@@ -22,6 +22,10 @@ from .middleware import EventDispatchMiddleware as EventDispatcher
 
 
 class SafeModelSerializerMixIn(object):
+    """
+    Миксин, генерирующий пустой сериализатор для действий,
+    связанных с созданием/изменением объектов.
+    """
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
             orig_model = self.serializer_class.Meta.model
@@ -36,6 +40,11 @@ class SafeModelSerializerMixIn(object):
 
 
 class FilterByAppViewSet:
+    """
+    Миксин для Viewset'ов, работающих с объектами ApiModelMixIn.
+    - заменяет pk на msa_id при создании объектов
+    - фильтрует выборки по request.app
+    """
     def create(self, request, *args, **kwargs):
         id = request.data.pop('id')
         request.data['msa_id'] = id
@@ -62,6 +71,12 @@ class OrganizationViewSet(FilterByAppViewSet,
 
     @detail_route()
     def intervals(self, request, msa_id):
+        """
+        Возвращает список интервалов для данной организации.
+        Интервалы, относящиеся к другим организациям, тоже включаются, но без некоторых полей (см. ниже).
+        Обязательные аргументы: start, end.
+        Необязательный аргумент: resource (если задан, список фильтруется по нему).
+        """
         start, end = parse_args(parse_datetime, request.GET, False, 'start', 'end')
         resource_msa_id = request.GET.get('resource')
         org = self.get_object()
@@ -112,7 +127,11 @@ class ManagerViewSet(FilterByAppViewSet,
     lookup_field = 'msa_id'
 
     def destroy(self, request, *args, **kwargs):
-        if 'organization' in request.GET:           # удалить только из указанной организации
+        """
+        Если указан GET-аргумент organization, удаляет менеджера только из указанной организации,
+        иначе удаляет объект менеджера.
+        """
+        if 'organization' in request.GET:
             instance = self.get_object()
             organization_msa_id = request.GET.get('organization')
             organization = Organization.objects.get(app=request.app, msa_id=organization_msa_id)
@@ -123,6 +142,10 @@ class ManagerViewSet(FilterByAppViewSet,
 
     @list_route(['POST'])
     def add_many(self, request):
+        """
+        Создаёт (при необходимости) менеджеров с указанными ids и назначает их в указанную организацию.
+        Аргументы ids и organization обязательны.
+        """
         msa_ids = request.data.get('ids')
         organization_msa_id = request.data.get('organization')
 
@@ -151,6 +174,10 @@ class ResourceViewSet(FilterByAppViewSet,
 
     @list_route(['POST'])
     def add_many(self, request):
+        """
+        Создаёт (при необходимости) ресурсы с указанными ids.
+        Если указан аргумент organization, присоединяет их к указанной организации.
+        """
         msa_ids = request.data.get('ids')
         msa_organization_id = request.data.get('organization')
 
@@ -174,6 +201,13 @@ class ResourceViewSet(FilterByAppViewSet,
     @detail_route(['GET', 'PUT', 'DELETE'])
     # @append_events_data()
     def membership(self, request, msa_id):
+        """
+        В зависимости от метода:
+        GET: возвращает расписание данного ресурса для указанной организации
+        (если не состоит в ней, вернёт 404)
+        PUT: присоединяет ресурс к указанной организации (если уже в ней, вернёт 400)
+        DELETE: увольняет ресурс из указанной организации (если не состоит в ней, вернёт 400)
+        """
         obj = self.get_object()
         msa_organization_id = request.data.get('organization') or request.GET.get('organization')
         organization = get_object_or_404(Organization, app=request.app, msa_id=msa_organization_id)
@@ -196,6 +230,16 @@ class ResourceViewSet(FilterByAppViewSet,
     @detail_route(['POST'])
     @append_events_data()
     def apply_schedule(self, request, msa_id):
+        """
+        Применяет или очищает расписание для указанного ресурса с организацией, создавая новые интервалы.
+        Аргументы:
+        - organization (int), обяз.
+        - start (datetime), необяз.
+        - end (datetime), необяз.
+        - schedule_intervals (список из ScheduleIntervalSerializer)
+
+        В ответе вернёт {'detail': blahblah, 'events': список пользовательских событий}
+        """
         organization_msa_id = request.data.get('organization') or request.GET.get('organization')
         start, end = parse_args(parse_datetime, request.data, True, 'start', 'end')
         intervals_raw = request.data.get('schedule_intervals')
@@ -244,7 +288,7 @@ class ResourceViewSet(FilterByAppViewSet,
                 membership.schedule_extended_date = end
                 membership.save()
             manager_id = request.GET.get('author_id')
-            EventDispatcher.push_event_to_responce(kind='apply-schedule',
+            EventDispatcher.push_event_to_response(kind='apply-schedule',
                                                    manager=manager_id,
                                                    resource=msa_id,
                                                    organization=organization_msa_id,
@@ -257,6 +301,10 @@ class ResourceViewSet(FilterByAppViewSet,
 
     @detail_route()
     def intervals(self, request, msa_id):
+        """
+        Возвращает список интервалов для указанного ресурса.
+        GET-аргументы start и end - обязательны.
+        """
         start, end = parse_args(parse_datetime, request.GET, False, 'start', 'end')
         resource = self.get_object()
 
@@ -270,6 +318,11 @@ class ResourceViewSet(FilterByAppViewSet,
     @detail_route(['POST'])
     @append_events_data()
     def clear_unavailable_interval(self, request, msa_id):
+        """
+        Обозначает интервал [start, end] как нерабочий для указанного ресурса.
+        POST-аргументы start и end - обязательны.
+        В ответе вернёт список пользовательских событий.
+        """
         start, end = parse_args(parse_datetime, request.data, False, 'start', 'end')
         resource = self.get_object()
         result = resource.clear_unvailable_interval(start, end)
@@ -288,6 +341,7 @@ class IntervalViewSet(mixins.CreateModelMixin,
 
     @append_events_data()
     def create(self, request, *args, **kwargs):
+        """Переопределяет ф-ию create с целью вернуть в ответе сообщение в detail и список пользовательских событий."""
         kind = request.data.get('kind')
         if isinstance(kind, str):
             kind = Interval.kind_from_str(kind)
@@ -306,6 +360,7 @@ class IntervalViewSet(mixins.CreateModelMixin,
 
     @append_events_data()
     def update(self, request, *args, **kwargs):
+        """Переопределяет ф-ию update с целью вернуть в ответе сообщение в detail и список пользовательских событий."""
         ret = super().update(request, *args, **kwargs)
         ret.data = {'detail': _('Interval has been updated.')}
         return ret
@@ -313,6 +368,10 @@ class IntervalViewSet(mixins.CreateModelMixin,
     @list_route(['DELETE'])
     @append_events_data()
     def delete_many(self, request):
+        """
+        Удаляет интервалы, ids которых переданы в POST (при наличии прав).
+        В ответе вернёт список пользовательских событий.
+        """
         ids = request.data.get('ids')
         for id in ids:
             self.kwargs = {'pk': id}
