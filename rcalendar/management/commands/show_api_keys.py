@@ -3,6 +3,7 @@ from ...models import ApiKey
 
 
 class Command(BaseCommand):
+    """Отображает список имеющихся Api-ключей."""
     help = 'Displays list of saved Api Keys'
 
     def handle(self, *args, **options):

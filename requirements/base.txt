@@ -1,0 +1,7 @@
+django
+djangorestframework
+django-url-filter
+psycopg2
+gunicorn
+pytz
+raven

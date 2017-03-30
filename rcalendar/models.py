@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional, Union
 import uuid
 import datetime
 
@@ -49,7 +49,7 @@ class Manager(ApiModelMixIn):
     """
     organizations = models.ManyToManyField(Organization, related_name="managers")
 
-    def organizations_for_resource(self, resource: Resource) -> QuerySet:
+    def organizations_for_resource(self, resource: 'Resource') -> QuerySet:
         """Возвращает QS с организациями, в которые вовлечен данный ресурс"""
         return self.organizations.filter(resource_members__resource=resource)
 
@@ -125,7 +125,7 @@ class IntervalQuerySet(QuerySet):
             dt = utils.datetime_from_date(dt)
         return self.filter(Q(start__lt=dt, end__gt=dt))
 
-    def similar(self, interval: Interval) -> QuerySet:
+    def similar(self, interval: 'Interval') -> QuerySet:
         """
         Возвращает QS с интервалами, совпадающими с переданным interval по основным полям:
         resource, kind, organization, manager.
@@ -221,7 +221,7 @@ class Interval(models.Model):
             return self.manager.msa_id if msa_id_only and self.manager else self.manager
         return None
 
-    def as_schedule_intervals(self) -> ScheduleIntervalList:
+    def as_schedule_intervals(self) -> 'ScheduleIntervalList':
         """Разбивает интервал на отрезки по дням недели. Возвращает список из ScheduleInterval."""
         ret = []
         # перебираем дни с первого по последний, начиная с 0
@@ -251,7 +251,7 @@ class Interval(models.Model):
     #             if other.start < self.end <= other.end:  # пересекаются
     #                 self.end = other.start
 
-    def join_with_existing(self, existing: [QuerySet, IntervalList]=None,
+    def join_with_existing(self, existing: Union[QuerySet, 'IntervalList']=None,
                            timedelta: datetime.timedelta='default') -> bool:
         """
         Cклеивает данный интервал с другими интервалами, переданными в existing или взятыми из БД.
@@ -264,7 +264,7 @@ class Interval(models.Model):
 
         :param timedelta: временной промежуток для границ склеивания
         :param existing: если не указан, интервалы берутся из базы
-        :return: значение bool, показывающее, были ли сделаны изменения в список интервалов (или в бд) или нет.
+        :return: bool (сделаны изменения или нет).
         """
         if timedelta == 'default':
             timedelta = Interval.JOIN_GAP
@@ -310,10 +310,11 @@ class Interval(models.Model):
 
         return changed
 
-    def substract_from_existing(self, existing: [QuerySet, IntervalList]=None) -> bool:
+    def substract_from_existing(self, existing: Union[QuerySet, 'IntervalList']=None) -> bool:
         """
         Исключает интервал из имеющихся интервалов, удаляя их или обрезая.
         Функция противоположна по смыслу join_with_existing и обладает теми же особенностями.
+
         :param existing: список рассматриваемых интервалов, любо None (в этом случае берется qs похожих из базы)
         :return: значение bool, показывающее, были ли сделаны изменения в список интервалов (или в бд) или нет.
         """
@@ -367,6 +368,7 @@ class Interval(models.Model):
         Переопределяет функцию Model.save с доп. аргументами.
         Перед сохранением производит необходимые проверки на валидность данного интервала
         (при ошибке вызывается ValidationError).
+
         :param join_existing: склеивать с имеющимися интервалами в бд или нет
         :param trim: обрезать имеющиеся интервалы в бд или нет
         :param events: генерировать ли пользовательские события или нет
@@ -445,6 +447,7 @@ class Interval(models.Model):
     def delete(self, events=True, **kwargs):
         """
         Переопределяет функцию Model.delete с доп. аргументом.
+
         :param events: генерировать ли пользовательские события или нет
         """
         if events:
@@ -520,9 +523,10 @@ class ResourceMembership(models.Model):
             self.save()
 
     def apply_schedule(self, start: datetime.datetime, end: datetime.datetime,
-                       schedule_intervals: ScheduleIntervalList=None, save_as_default=False) -> bool:
+                       schedule_intervals: 'ScheduleIntervalList'=None, save_as_default=False) -> bool:
         """
         Cоздает новые интервалы доступности ресурса для организации взамен старых.
+
         :param schedule_intervals: список интервалов графика (если None, берет имеющиеся)
         :param save_as_default: сохранять переданные schedule_intervals в качестве постоянных или нет
         :param start: дата и время начала

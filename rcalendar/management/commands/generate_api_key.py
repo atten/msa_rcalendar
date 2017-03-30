@@ -3,6 +3,7 @@ from ...models import ApiKey
 
 
 class Command(BaseCommand):
+    """Создаёт и отображает новый ApiKey."""
     help = 'Creates and displays new Api Key'
 
     def add_arguments(self, parser):

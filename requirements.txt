@@ -1,7 +1,1 @@
-django
-djangorestframework
-django-url-filter
-psycopg2
-gunicorn
-pytz
-raven
+-r requirements/base.txt

@@ -1,0 +1,6 @@
+-r base.txt
+
+-e git://github.com/kornov-rooman/drf_api_docs.git#egg=drf_api_docs
+Sphinx
+sphinx_rtd_theme
+recommonmark

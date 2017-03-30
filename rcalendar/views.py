@@ -21,7 +21,7 @@ from .decorators import append_events_data
 from .middleware import EventDispatchMiddleware as EventDispatcher
 
 
-class SafeModelSerializerMixIn(object):
+class SafeModelSerializerMixIn:
     """
     Миксин, генерирующий пустой сериализатор для действий,
     связанных с созданием/изменением объектов.
@@ -33,6 +33,7 @@ class SafeModelSerializerMixIn(object):
             class CreateInstanceSerializer(ModelSerializer):
                 class Meta:
                     model = orig_model
+                    fields = '__all__'
 
             return CreateInstanceSerializer
 
@@ -81,9 +82,13 @@ class OrganizationViewSet(FilterByAppViewSet,
         resource_msa_id = request.GET.get('resource')
         org = self.get_object()
 
-        intervals = Interval.objects.between(start, end).filter(Q(organization=org) |                           # интервалы, относящиеся к текущей организации
-                                                                Q(kind=Interval.Kind_OrganizationReserved) |    # или к организациям вообще
-                                                                Q(kind=Interval.Kind_Unavailable))
+        # интервалы, относящиеся к текущей организации или к организациям вообще
+        intervals = Interval.objects.between(start, end).filter(
+            Q(organization=org) |
+            Q(kind=Interval.Kind_OrganizationReserved) |
+            Q(kind=Interval.Kind_Unavailable)
+        )
+
         if resource_msa_id:
             intervals = intervals.filter(resource__app=request.app, resource__msa_id=resource_msa_id)
             memberships = ResourceMembership.objects.filter(resource__app=request.app, resource__msa_id=resource_msa_id)
@@ -100,13 +105,15 @@ class OrganizationViewSet(FilterByAppViewSet,
         filtered_intervals = []
         for i in intervals:
             add = True
-            if i.kind == Interval.Kind_OrganizationReserved and i.organization_id != org.id:    # найден интервал другой орг-ии
+            if i.kind == Interval.Kind_OrganizationReserved and i.organization_id != org.id:
+                # найден интервал другой орг-ии
                 i.comment = None      # скрываем комментарий
                 i.manager = None      # скрываем менеджера
                 other_org_interval_ranges.setdefault(i.resource_id, [])
                 other_org_interval_ranges[i.resource_id].append((i.start, i.end))
 
-            if i.resource_id in other_org_interval_ranges and i.kind != i.Kind_OrganizationReserved:  # найден интервал ресурса, попадающий в др. орг-ию
+            if i.resource_id in other_org_interval_ranges and i.kind != i.Kind_OrganizationReserved:
+                # найден интервал ресурса, попадающий в др. орг-ию
                 for r in other_org_interval_ranges[i.resource_id]:
                     if r[0] <= i.start and r[1] >= i.end:
                         add = False
