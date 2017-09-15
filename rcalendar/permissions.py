@@ -6,7 +6,7 @@ class HasValidApiKey(permissions.BasePermission):
     def has_permission(self, request, view):
         """Если api-key в заголовках запроса валидный, присваивает app в request и возвращает True, иначе - False."""
         try:
-            val = request.META.get('HTTP_API_KEY')
+            val = request.META.get('HTTP_API_KEY') or request.GET.get('api_key')
             app = ApiKey.objects.get(key=val, is_active=True).app
             request.app = app       # put found app to request
             return True

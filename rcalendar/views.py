@@ -1,7 +1,7 @@
 import datetime
 
 from rest_framework import viewsets, mixins
-from rest_framework.decorators import list_route, detail_route
+from rest_framework.decorators import list_route, detail_route, api_view
 from rest_framework.exceptions import ParseError, ValidationError, NotFound
 from rest_framework.serializers import ModelSerializer
 from rest_framework import status
@@ -19,6 +19,12 @@ from .models import Organization, Manager, Resource, Interval, ScheduleInterval,
 from .utils import parse_args
 from .decorators import append_events_data
 from .middleware import EventDispatchMiddleware as EventDispatcher
+
+
+@api_view()
+# @permission_classes((permissions.ValidApiKeyOrSuperuserOrDenied, ))
+def ping(request):
+    return Response(data={'pong': 'ok'})
 
 
 class SafeModelSerializerMixIn:

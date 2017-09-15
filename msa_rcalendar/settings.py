@@ -65,7 +65,7 @@ INSTALLED_APPS = [
     # 'django.contrib.staticfiles',
     # 'django.contrib.admin',
     # 'django.contrib.sites',
-    'django_congen',
+    # 'django_congen',
     'rest_framework',
     'rcalendar',
 ]
