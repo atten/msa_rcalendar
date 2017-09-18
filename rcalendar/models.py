@@ -335,7 +335,7 @@ class Interval(models.Model):
                               kind=interval.kind,
                               resource=interval.resource,
                               manager=interval.manager,
-                              organization=interval.manager,
+                              organization=interval.organization,
                               comment=interval.comment)
                 if do_save:
                     i2.save(join_existing=False, trim=False, events=False)
