@@ -9,5 +9,6 @@ router.register(r'resource', views.ResourceViewSet)
 router.register(r'interval', views.IntervalViewSet)
 
 urlpatterns = [
-    url(r'^', include(router.urls)),
+    url(r'^ping/$', views.ping, name='service-api-ping'),
 ]
+urlpatterns += router.urls
