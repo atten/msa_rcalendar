@@ -5,3 +5,5 @@ psycopg2
 gunicorn
 pytz
 raven
+-e git+https://github.com/night-crawler/django-docker-helpers.git@0.0.7#egg=django-docker-helpers
+pyaml

@@ -1,7 +1,9 @@
 import socket
 import os
 
-DEBUG = True
+from django_docker_helpers.utils import load_yaml_config
+
+HOSTNAME = socket.gethostname()
 
 # PATHS
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +18,19 @@ LOGGING_DIR = os.path.join(VIRTUAL_ENV_DIR, 'log')
 
 LOCAL_SETTINGS_FILE = os.path.join(BASE_DIR, PROJECT_NAME, 'local_settings.py')
 SECRET_SETTINGS_FILE = os.path.join(BASE_DIR, PROJECT_NAME, 'secret_settings.py')
+
+
+# =================== LOAD YAML CONFIG =================== #
+CONFIG, configure = load_yaml_config(
+    '',
+    os.path.join(
+        BASE_DIR, 'msa_rcalendar', 'config',
+        os.environ.get('DJANGO_CONFIG_FILE_NAME', 'dev.yml')
+    )
+)
+# ======================================================== #
+
+DEBUG = configure('debug', False)
 
 
 # ------
@@ -35,26 +50,16 @@ if not os.path.exists(LOCAL_SETTINGS_FILE):
         f.write('# -*- coding: utf-8 -*-\n')
         f.close()
 
-from .secret_settings import *
+# imports secret key
+from .secret_settings import *  # noqa
 
 # HOSTS
-HOSTNAME = socket.gethostname()
 RELEASE_HOSTS = [
     'primary',
     'hatebase',
     'burble',
 ]
-
-ALLOWED_HOSTS = [
-    HOSTNAME,
-    '127.0.0.1',
-    'rcalendar-dev',
-    'rcalendar.marfa.team',
-    'calendar.marfa.team',
-]
-
-if HOSTNAME in RELEASE_HOSTS:
-    DEBUG = False
+ALLOWED_HOSTS = [HOSTNAME] + configure('hosts', [])
 
 
 INSTALLED_APPS = [
@@ -115,12 +120,15 @@ TEMPLATES = [
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'msa_rcalendar',
-        'USER': '',
-        'HOST': '',
-        'PORT': '',
-        'CONN_MAX_AGE': 60
+        'ENGINE': configure('db.name', 'django.db.backends.postgresql'),
+        'HOST': configure('db.host', 'localhost'),
+        'PORT': configure('db.port', ''),
+
+        'NAME': configure('db.database', 'msa_rcalendar'),
+        'USER': configure('db.user', 'msa_rcalendar'),
+        'PASSWORD': configure('db.password', 'msa_rcalendar'),
+
+        'CONN_MAX_AGE': int(configure('db.conn_max_age', 60)),
     }
 }
 
@@ -150,4 +158,4 @@ REST_FRAMEWORK = {
 }
 
 # REDEFINE
-from .local_settings import *
+from .local_settings import *  # noqa
