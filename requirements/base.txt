@@ -1,9 +1,13 @@
-django
-djangorestframework
-django-url-filter
+# experiment
+django==2.0
+djangorestframework==3.7.7
+django-url-filter==0.3.4
+uwsgi==2.0.15
+django-uwsgi==0.2.1
 psycopg2
 gunicorn
 pytz
 raven
--e git+https://github.com/night-crawler/django-docker-helpers.git@0.0.7#egg=django-docker-helpers
 pyaml
+
+-e git+https://github.com/night-crawler/django-docker-helpers.git@0.0.10#egg=django-docker-helpers

@@ -6,7 +6,8 @@ from django.db import models
 from django.db.models import Q, Min, Max
 from django.db.models.query import QuerySet
 from django.utils.translation import ugettext_lazy as _
-from django.utils.timezone import get_default_timezone, UTC
+from django.utils.timezone import get_default_timezone
+from pytz import utc as UTC
 
 from . import utils, exceptions
 from .middleware import EventDispatchMiddleware as EventDispatcher

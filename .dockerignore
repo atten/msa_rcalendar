@@ -1,0 +1,23 @@
+# VARIOUS GARBAGE
+.tmp/
+.git/
+.env
+.idea/
+.cache/
+__pycache__
+
+# DIRS
+docker/
+docs/
+
+# FILES
+scripts/docker_*
+
+package-lock.json
+
+.bumpversion.cfg
+docker-compose.yml
+Dockerfile
+
+uwsgi.*
+node_modules

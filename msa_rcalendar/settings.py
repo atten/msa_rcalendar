@@ -3,6 +3,8 @@ import os
 
 from django_docker_helpers.utils import load_yaml_config
 
+from . import __version__
+
 HOSTNAME = socket.gethostname()
 
 # PATHS
@@ -25,12 +27,16 @@ CONFIG, configure = load_yaml_config(
     '',
     os.path.join(
         BASE_DIR, 'msa_rcalendar', 'config',
-        os.environ.get('DJANGO_CONFIG_FILE_NAME', 'dev.yml')
+        os.environ.get('DJANGO_CONFIG_FILE_NAME', 'without-docker.yml')
     )
 )
 # ======================================================== #
 
 DEBUG = configure('debug', False)
+
+COMMON_BASE_HOST = configure('common.base.host', 'rcalendar.marfa.dev')  # 'web.marfa.dev' | 'marfa.team' | etc
+COMMON_BASE_PORT = configure('common.base.port', 10546)  # 10546 etc
+COMMON_BASE_SCHEME = configure('common.base.scheme', 'http')  # Either 'http' or 'https'
 
 
 # ------
@@ -71,13 +77,20 @@ INSTALLED_APPS = [
     # 'django.contrib.admin',
     # 'django.contrib.sites',
     # 'django_congen',
+    'django_uwsgi',
     'rest_framework',
     'rcalendar',
 ]
 
-if not DEBUG:
-    import raven
-    INSTALLED_APPS += ('raven.contrib.django.raven_compat',)
+# RAVEN
+if configure('raven', False) and configure('raven.dsn', ''):
+    import raven  # noqa
+
+    INSTALLED_APPS += ['raven.contrib.django.raven_compat']
+    RAVEN_CONFIG = {
+        'dsn': configure('raven.dsn', None),
+        'release': __version__,
+    }
 
 
 MIDDLEWARE_CLASSES = [
@@ -122,7 +135,7 @@ DATABASES = {
     'default': {
         'ENGINE': configure('db.name', 'django.db.backends.postgresql'),
         'HOST': configure('db.host', 'localhost'),
-        'PORT': configure('db.port', ''),
+        'PORT': configure('db.port', 5432),
 
         'NAME': configure('db.database', 'msa_rcalendar'),
         'USER': configure('db.user', 'msa_rcalendar'),
@@ -156,6 +169,8 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 10,
     'DEFAULT_FILTER_BACKENDS': ('url_filter.integrations.drf.DjangoFilterBackend',)
 }
+
+UWSGI_STATIC_SAFE = configure('uwsgi.static_safe', False)
 
 # REDEFINE
 from .local_settings import *  # noqa

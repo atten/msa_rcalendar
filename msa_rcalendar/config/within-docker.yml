@@ -17,3 +17,10 @@ db:
   user: msa_rcalendar
   password: msa_rcalendar
 
+
+# INTERNAL PROJECT SETTINGS
+common:
+  base:
+    host: rcaldendar.marfa.dev
+    port: 8000
+    scheme: http
