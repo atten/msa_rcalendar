@@ -1,3 +1,5 @@
+debug: true
+
 # DJANGO ALLOWED_HOSTS
 hosts:
   - localhost
@@ -11,7 +13,7 @@ internal_ips:
 
 db:
   engine: django.db.backends.postgresql
-  host: 127.0.0.1
+  host: postgres
   port: 5432
   database: msa_rcalendar
   user: msa_rcalendar
